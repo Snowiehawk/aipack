@@ -18,3 +18,6 @@ git pull
 
 ## Uninstall
 .\uninstall.ps1
+
+Installer now ensures git + node are installed (winget preferred, official installers as fallback).
+
