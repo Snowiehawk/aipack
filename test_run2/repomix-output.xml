@@ -1,0 +1,1609 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+- Pay special attention to the Repository Instruction. These contain important context and guidelines specific to this project.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: test_run2/**, _aipack_*/**, _ai_pack_*/**
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+install.ps1
+README.md
+src/aipack.ps1
+test_run/AIPACK_INSTRUCTIONS.md
+test_run/AIPACK_SUMMARY.txt
+test_run/ASSET_MANIFEST.md
+test_run/patch.diff
+test_run/REPO_INFO.md
+test_run/repomix-output.xml
+uninstall.ps1
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="test_run/AIPACK_INSTRUCTIONS.md">
+AIPACK snapshot metadata
+
+repo: aipack
+utc: 20251222-231913
+branch: main
+commit: ed140887817a2ea9f307375af08a03e870b09f0a
+dirty: yes
+
+Notes for AI:
+- repomix-output.xml is the packed snapshot of this folder.
+- patch.diff (and optional patch.staged.diff) contain git diffs from this same snapshot.
+- See REPO_INFO.md for full environment and repo metadata.
+</file>
+
+<file path="test_run/AIPACK_SUMMARY.txt">
+AIPACK complete
+outDir: D:\Projects\aipack\test_run
+repomix: D:\Projects\aipack\test_run\repomix-output.xml
+diff: D:\Projects\aipack\test_run\patch.diff
+</file>
+
+<file path="test_run/ASSET_MANIFEST.md">
+# ASSET_MANIFEST
+
+Common UI assets and whether they appear in repomix-output.xml.
+
+- web/static/favicon.ico | exists=no | in-repomix=yes
+</file>
+
+<file path="test_run/patch.diff">
+warning: in the working copy of 'src/aipack.ps1', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/aipack.ps1 b/src/aipack.ps1
+index 01ebbc6..ee71fd9 100644
+--- a/src/aipack.ps1
++++ b/src/aipack.ps1
+@@ -35,6 +35,11 @@ function Try-Cmd([string]$Exe, [string[]]$CmdArgs) {
+   }
+ }
+ 
++function Write-Step([string]$Message) {
++  $ts = (Get-Date).ToString("HH:mm:ss")
++  Write-Host ("[$ts] " + $Message)
++}
++
+ 
+ function Sanitize-Remote([string]$Url) {
+   if ([string]::IsNullOrWhiteSpace($Url)) { return "" }
+@@ -88,7 +93,7 @@ function Run-Doctor {
+   Write-Host "git version:"; git --version
+   Write-Host "node version:"; node -v
+   Write-Host "npm version:"; npm -v
+-  Write-Host "repomix version:"; npx.cmd repomix@latest --version
++  Write-Host "repomix version:"; npx.cmd --yes repomix@latest --version
+   Write-Host ""
+   $g = Try-Cmd "git" @("rev-parse","--is-inside-work-tree")
+   Write-Host ("git repo: " + ($(if ($g.Code -eq 0) {"yes"} else {"no"})))
+@@ -123,10 +128,14 @@ if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing n
+ 
+ Push-Location $workDir
+ try {
++  Write-Step "aipack v$AIPACK_VERSION starting"
++  Write-Step "Working dir: $workDir"
++  Write-Step "Output dir: $outDir"
++  Write-Step "Checking git repository"
+ 	$inside = (Try-Cmd "git" @("rev-parse","--is-inside-work-tree")).Out.Trim()
+ 	if ($inside -ne "true") { throw "Not a git repository: $workDir`n$inside" }
+ 
+-
++  Write-Step "Collecting git and environment metadata"
+   $branch = (Try-Cmd "git" @("rev-parse","--abbrev-ref","HEAD")).Out.Trim()
+   $sha = (Try-Cmd "git" @("rev-parse","HEAD")).Out.Trim()
+   $statusShort = (Try-Cmd "git" @("status","-sb")).Out.TrimEnd()
+@@ -145,7 +154,7 @@ try {
+   $pyVer = ""
+   if (Get-Command python -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "python" @("--version")).Out.Trim() }
+   elseif (Get-Command py -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "py" @("-V")).Out.Trim() }
+-  $repomixVer = (Try-Cmd "npx.cmd" @("repomix@latest","--version")).Out.Trim()
++  $repomixVer = (Try-Cmd "npx.cmd" @("--yes","repomix@latest","--version")).Out.Trim()
+ 
+   $startup = Join-Path $workDir "docs\STARTUP.md"
+   $readme = Join-Path $workDir "README.md"
+@@ -209,9 +218,11 @@ try {
+   foreach ($e in $expectedStatus) { $repoInfoLines += ("- " + $e.Path + ": " + ($(if ($e.Present) {"present"} else {"missing"}))) }
+ 
+   $repoInfoPath = Join-Path $outDir "REPO_INFO.md"
++  Write-Step "Writing REPO_INFO.md"
+   Write-Utf8NoBom $repoInfoPath ($repoInfoLines -join "`n")
+ 
+   $injectPath = Join-Path $outDir "AIPACK_INSTRUCTIONS.md"
++  Write-Step "Writing AIPACK_INSTRUCTIONS.md"
+   $injectLines = @()
+   $injectLines += "AIPACK snapshot metadata"
+   $injectLines += ""
+@@ -228,11 +239,13 @@ try {
+   Write-Utf8NoBom $injectPath ($injectLines -join "`n")
+ 
+   $patchPath = Join-Path $outDir "patch.diff"
++  Write-Step "Writing patch.diff"
+   $diff = Try-Cmd "git" @("diff","--no-color")
+   if ($diff.Code -ne 0) { throw "git diff failed." }
+   Write-Utf8NoBom $patchPath $diff.Out
+ 
+   if ($Staged) {
++    Write-Step "Writing patch.staged.diff"
+     $stagedPath = Join-Path $outDir "patch.staged.diff"
+     $sdiff = Try-Cmd "git" @("diff","--cached","--no-color")
+     if ($sdiff.Code -eq 0) { Write-Utf8NoBom $stagedPath $sdiff.Out }
+@@ -240,6 +253,7 @@ try {
+ 
+   if (-not [string]::IsNullOrWhiteSpace($OpenAPIUrl)) {
+     $openApiPath = Join-Path $outDir "openapi.json"
++    Write-Step "Fetching OpenAPI: $OpenAPIUrl"
+     try {
+       $resp = Invoke-WebRequest -Uri $OpenAPIUrl -TimeoutSec 10
+       if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+@@ -276,7 +290,8 @@ try {
+   $repArgs.Add("--ignore") | Out-Null
+   $repArgs.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
+ 
+-  $r = Try-Cmd "npx.cmd" (@("repomix@latest") + $repArgs.ToArray())
++  Write-Step "Running repomix (this can take a while)"
++  $r = Try-Cmd "npx.cmd" (@("--yes","repomix@latest") + $repArgs.ToArray())
+   if ($r.Code -ne 0) { throw "repomix failed.`n$r" }
+ 
+   $assetLines = @()
+@@ -305,6 +320,7 @@ try {
+   }
+ 
+   $assetPath = Join-Path $outDir "ASSET_MANIFEST.md"
++  Write-Step "Writing ASSET_MANIFEST.md"
+   Write-Utf8NoBom $assetPath ($assetLines -join "`n")
+ 
+   $sum = @()
+@@ -314,9 +330,11 @@ try {
+   $sum += "diff: $patchPath"
+   if ($Staged) { $sum += "staged diff: " + (Join-Path $outDir "patch.staged.diff") }
+   $sumPath = Join-Path $outDir "AIPACK_SUMMARY.txt"
++  Write-Step "Writing AIPACK_SUMMARY.txt"
+   Write-Utf8NoBom $sumPath ($sum -join "`n")
+ 
+   if ($Zip) {
++    Write-Step "Creating zip archive"
+     $zipPath = Join-Path $invocationDir ($OutName + ".zip")
+     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+     Compress-Archive -Path (Join-Path $outDir "*") -DestinationPath $zipPath -Force
+</file>
+
+<file path="test_run/REPO_INFO.md">
+# REPO_INFO
+
+repo name: aipack
+snapshot timestamp (UTC): 20251222-231913
+packed from: D:\Projects\aipack
+aipack version: 0.3.1
+repomix: 1.11.0
+python: Python 3.11.9
+node: v22.19.0
+npm: 10.9.3
+git: git version 2.51.0.windows.1
+
+git branch: main
+git commit: ed140887817a2ea9f307375af08a03e870b09f0a
+working tree dirty: yes
+origin url: git@github.com:Snowiehawk/aipack.git
+
+git status:
+```
+## main...origin/main
+ M src/aipack.ps1
+```
+
+recent commits:
+```
+ed14088 (HEAD -> main, origin/main) Installer: auto install git + node prerequisites
+c1cfe94 Initial aipack tool
+```
+
+how to run pointers:
+- docs/STARTUP.md: missing
+- README.md: present
+
+lockfiles tracked in git:
+- (none found)
+
+common shareable files present:
+- LICENSE: missing
+- LICENSE.md: missing
+- LICENSE.txt: missing
+- CHANGELOG.md: missing
+- RELEASE_NOTES.md: missing
+- CODE_OF_CONDUCT.md: missing
+- .github/CODEOWNERS: missing
+</file>
+
+<file path="test_run/repomix-output.xml">
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+- Pay special attention to the Repository Instruction. These contain important context and guidelines specific to this project.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: test_run/**, _aipack_*/**, _ai_pack_*/**
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+install.ps1
+README.md
+src/aipack.ps1
+uninstall.ps1
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/aipack.ps1">
+param(
+  [Parameter(Position=0)]
+  [string]$Arg = "",
+  [Alias("Name")]
+  [string]$OutName = "",
+  [string]$RepoName = "",
+  [switch]$Zip,
+  [switch]$Staged,
+  [switch]$NoRemote,
+  [switch]$Lean,
+  [string]$OpenAPIUrl = "",
+  [switch]$Compress,
+  [string]$ExtraIgnore = ""
+)
+
+$AIPACK_VERSION = "0.3.1"
+
+function Write-Utf8NoBom([string]$Path, [string]$Content) {
+  $enc = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
+
+function Try-Cmd([string]$Exe, [string[]]$CmdArgs) {
+  try {
+    $out = & $Exe @CmdArgs 2>&1
+    $code = $LASTEXITCODE
+
+    if ($null -eq $out) { $outText = "" }
+    elseif ($out -is [System.Array]) { $outText = ($out -join "`n") }
+    else { $outText = [string]$out }
+
+    return [pscustomobject]@{ Out = $outText; Code = $code }
+  } catch {
+    return [pscustomobject]@{ Out = ($_ | Out-String); Code = 1 }
+  }
+}
+
+function Write-Step([string]$Message) {
+  $ts = (Get-Date).ToString("HH:mm:ss")
+  Write-Host ("[$ts] " + $Message)
+}
+
+
+function Sanitize-Remote([string]$Url) {
+  if ([string]::IsNullOrWhiteSpace($Url)) { return "" }
+  return ($Url -replace '://([^/@:]+):([^/@]+)@', '://***:***@')
+}
+
+function RelPathUnix([string]$Base, [string]$Full) {
+  $rel = $Full.Substring($Base.Length).TrimStart('\','/')
+  return ($rel -replace '\\','/')
+}
+
+function Show-Help {
+  Write-Host ""
+  Write-Host "aipack v$AIPACK_VERSION"
+  Write-Host ""
+  Write-Host "Usage (run from the repo folder you want packed):"
+  Write-Host "  aipack"
+  Write-Host "  aipack <outFolderName>"
+  Write-Host "  aipack help"
+  Write-Host "  aipack list"
+  Write-Host "  aipack doctor"
+  Write-Host ""
+  Write-Host "Options:"
+  Write-Host "  -Zip               Create <outFolder>.zip next to the folder"
+  Write-Host "  -Staged            Also write patch.staged.diff"
+  Write-Host "  -NoRemote          Omit origin URL from REPO_INFO.md"
+  Write-Host "  -Lean              Ignore common noisy outputs (preflight/mutations txt)"
+  Write-Host "  -Compress          Pass --compress to repomix"
+  Write-Host "  -OpenAPIUrl <url>  Fetch openapi.json (ex: http://127.0.0.1:8000/openapi.json)"
+  Write-Host "  -ExtraIgnore <csv> Extra repomix ignore patterns, comma separated"
+  Write-Host ""
+  Write-Host "Outputs (inside the out folder):"
+  Write-Host "  repomix-output.xml"
+  Write-Host "  patch.diff (plus patch.staged.diff if -Staged)"
+  Write-Host "  REPO_INFO.md"
+  Write-Host "  ASSET_MANIFEST.md"
+  Write-Host "  AIPACK_SUMMARY.txt"
+  Write-Host ""
+}
+
+function Run-Doctor {
+  Write-Host ""
+  Write-Host "AIPACK doctor"
+  Write-Host ("pwd: " + (Get-Location).Path)
+  Write-Host ""
+  Write-Host "where git:"; where.exe git
+  Write-Host "where node:"; where.exe node
+  Write-Host "where npm:"; where.exe npm
+  Write-Host "where npx:"; where.exe npx
+  Write-Host ""
+  Write-Host "git version:"; git --version
+  Write-Host "node version:"; node -v
+  Write-Host "npm version:"; npm -v
+  Write-Host "repomix version:"; npx.cmd --yes repomix@latest --version
+  Write-Host ""
+  $g = Try-Cmd "git" @("rev-parse","--is-inside-work-tree")
+  Write-Host ("git repo: " + ($(if ($g.Code -eq 0) {"yes"} else {"no"})))
+  if ($g.Code -eq 0) {
+    Write-Host "git status -sb:"
+    git status -sb
+  }
+  Write-Host ""
+}
+
+if ($Arg -in @("help","list","-h","--help","/?")) { Show-Help; exit 0 }
+if ($Arg -eq "doctor") { Run-Doctor; exit 0 }
+
+if ($Arg -and [string]::IsNullOrWhiteSpace($OutName)) { $OutName = $Arg }
+
+$invocationDir = (Get-Location).Path
+$workDir = $invocationDir
+
+if ([string]::IsNullOrWhiteSpace($RepoName)) { $RepoName = (Split-Path $workDir -Leaf) }
+
+$tsUtc = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
+if ([string]::IsNullOrWhiteSpace($OutName)) {
+  $safeRepo = ($RepoName -replace '[^A-Za-z0-9._-]','_')
+  $OutName = "_aipack_${safeRepo}_$tsUtc"
+}
+
+$outDir = Join-Path $invocationDir $OutName
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Missing git in PATH." }
+if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing npx.cmd in PATH." }
+
+Push-Location $workDir
+try {
+  Write-Step "aipack v$AIPACK_VERSION starting"
+  Write-Step "Working dir: $workDir"
+  Write-Step "Output dir: $outDir"
+  Write-Step "Checking git repository"
+	$inside = (Try-Cmd "git" @("rev-parse","--is-inside-work-tree")).Out.Trim()
+	if ($inside -ne "true") { throw "Not a git repository: $workDir`n$inside" }
+
+  Write-Step "Collecting git and environment metadata"
+  $branch = (Try-Cmd "git" @("rev-parse","--abbrev-ref","HEAD")).Out.Trim()
+  $sha = (Try-Cmd "git" @("rev-parse","HEAD")).Out.Trim()
+  $statusShort = (Try-Cmd "git" @("status","-sb")).Out.TrimEnd()
+  $porc = (Try-Cmd "git" @("status","--porcelain")).Out
+  $dirty = -not [string]::IsNullOrWhiteSpace($porc)
+
+  $origin = ""
+  if (-not $NoRemote) {
+    $o = Try-Cmd "git" @("remote","get-url","origin")
+    if ($o.Code -eq 0) { $origin = Sanitize-Remote($o.Out.Trim()) }
+  }
+
+  $gitVer = (Try-Cmd "git" @("--version")).Out.Trim()
+  $nodeVer = (Try-Cmd "node" @("-v")).Out.Trim()
+  $npmVer = (Try-Cmd "npm" @("-v")).Out.Trim()
+  $pyVer = ""
+  if (Get-Command python -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "python" @("--version")).Out.Trim() }
+  elseif (Get-Command py -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "py" @("-V")).Out.Trim() }
+  $repomixVer = (Try-Cmd "npx.cmd" @("--yes","repomix@latest","--version")).Out.Trim()
+
+  $startup = Join-Path $workDir "docs\STARTUP.md"
+  $readme = Join-Path $workDir "README.md"
+
+  $tracked = (Try-Cmd "git" @("ls-files")).Out -split "`n"
+  $lockNeedles = @("package-lock.json","pnpm-lock.yaml","yarn.lock","bun.lockb","poetry.lock","Pipfile.lock","requirements.lock","requirements.txt")
+  $lockHits = @()
+  foreach ($n in $lockNeedles) {
+    $m = $tracked | Where-Object { $_.Trim().ToLower().EndsWith($n.ToLower()) }
+    if ($m) { $lockHits += $m }
+  }
+  $lockHits = $lockHits | Sort-Object -Unique
+
+  $expected = @("LICENSE","LICENSE.md","LICENSE.txt","CHANGELOG.md","RELEASE_NOTES.md","CODE_OF_CONDUCT.md",".github/CODEOWNERS")
+  $expectedStatus = foreach ($p in $expected) {
+    $full = Join-Path $workDir ($p -replace '/','\')
+    [pscustomobject]@{ Path = $p; Present = (Test-Path $full) }
+  }
+
+  $repoInfoLines = @()
+  $repoInfoLines += "# REPO_INFO"
+  $repoInfoLines += ""
+  $repoInfoLines += "repo name: $RepoName"
+  $repoInfoLines += "snapshot timestamp (UTC): $tsUtc"
+  $repoInfoLines += "packed from: $workDir"
+  $repoInfoLines += "aipack version: $AIPACK_VERSION"
+  $repoInfoLines += "repomix: $repomixVer"
+  if ($pyVer) { $repoInfoLines += "python: $pyVer" }
+  $repoInfoLines += "node: $nodeVer"
+  $repoInfoLines += "npm: $npmVer"
+  $repoInfoLines += "git: $gitVer"
+  $repoInfoLines += ""
+  $repoInfoLines += "git branch: $branch"
+  $repoInfoLines += "git commit: $sha"
+  $repoInfoLines += ("working tree dirty: " + ($(if ($dirty) {"yes"} else {"no"})))
+  if (-not $NoRemote) {
+    $repoInfoLines += ("origin url: " + ($(if ($origin) {$origin} else {"(none)"})))
+  } else {
+    $repoInfoLines += "origin url: (omitted)"
+  }
+  $repoInfoLines += ""
+  $repoInfoLines += "git status:"
+  $repoInfoLines += '```'
+  $repoInfoLines += $statusShort
+  $repoInfoLines += '```'
+  $repoInfoLines += ""
+  $repoInfoLines += "recent commits:"
+  $repoInfoLines += '```'
+  $repoInfoLines += (Try-Cmd "git" @("log","-5","--oneline","--decorate")).Out.TrimEnd()
+  $repoInfoLines += '```'
+  $repoInfoLines += ""
+  $repoInfoLines += "how to run pointers:"
+  $repoInfoLines += ("- docs/STARTUP.md: " + ($(if (Test-Path $startup) {"present"} else {"missing"})))
+  $repoInfoLines += ("- README.md: " + ($(if (Test-Path $readme) {"present"} else {"missing"})))
+  $repoInfoLines += ""
+  $repoInfoLines += "lockfiles tracked in git:"
+  if ($lockHits.Count -gt 0) { foreach ($h in $lockHits) { $repoInfoLines += "- $h" } }
+  else { $repoInfoLines += "- (none found)" }
+  $repoInfoLines += ""
+  $repoInfoLines += "common shareable files present:"
+  foreach ($e in $expectedStatus) { $repoInfoLines += ("- " + $e.Path + ": " + ($(if ($e.Present) {"present"} else {"missing"}))) }
+
+  $repoInfoPath = Join-Path $outDir "REPO_INFO.md"
+  Write-Step "Writing REPO_INFO.md"
+  Write-Utf8NoBom $repoInfoPath ($repoInfoLines -join "`n")
+
+  $injectPath = Join-Path $outDir "AIPACK_INSTRUCTIONS.md"
+  Write-Step "Writing AIPACK_INSTRUCTIONS.md"
+  $injectLines = @()
+  $injectLines += "AIPACK snapshot metadata"
+  $injectLines += ""
+  $injectLines += "repo: $RepoName"
+  $injectLines += "utc: $tsUtc"
+  $injectLines += "branch: $branch"
+  $injectLines += "commit: $sha"
+  $injectLines += ("dirty: " + ($(if ($dirty) {"yes"} else {"no"})))
+  $injectLines += ""
+  $injectLines += "Notes for AI:"
+  $injectLines += "- repomix-output.xml is the packed snapshot of this folder."
+  $injectLines += "- patch.diff (and optional patch.staged.diff) contain git diffs from this same snapshot."
+  $injectLines += "- See REPO_INFO.md for full environment and repo metadata."
+  Write-Utf8NoBom $injectPath ($injectLines -join "`n")
+
+  $patchPath = Join-Path $outDir "patch.diff"
+  Write-Step "Writing patch.diff"
+  $diff = Try-Cmd "git" @("diff","--no-color")
+  if ($diff.Code -ne 0) { throw "git diff failed." }
+  Write-Utf8NoBom $patchPath $diff.Out
+
+  if ($Staged) {
+    Write-Step "Writing patch.staged.diff"
+    $stagedPath = Join-Path $outDir "patch.staged.diff"
+    $sdiff = Try-Cmd "git" @("diff","--cached","--no-color")
+    if ($sdiff.Code -eq 0) { Write-Utf8NoBom $stagedPath $sdiff.Out }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($OpenAPIUrl)) {
+    $openApiPath = Join-Path $outDir "openapi.json"
+    Write-Step "Fetching OpenAPI: $OpenAPIUrl"
+    try {
+      $resp = Invoke-WebRequest -Uri $OpenAPIUrl -TimeoutSec 10
+      if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+        Write-Utf8NoBom $openApiPath $resp.Content
+      }
+    } catch { }
+  }
+
+  $repomixOut = Join-Path $outDir "repomix-output.xml"
+
+  $ignore = New-Object System.Collections.Generic.List[string]
+  $ignore.Add("$OutName/**") | Out-Null
+  $ignore.Add("_aipack_*/**") | Out-Null
+  $ignore.Add("_ai_pack_*/**") | Out-Null
+  if ($Lean) {
+    $ignore.Add("preflight_output*.txt") | Out-Null
+    $ignore.Add("**/preflight_output*.txt") | Out-Null
+    $ignore.Add("mutations_output*.txt") | Out-Null
+    $ignore.Add("**/mutations_output*.txt") | Out-Null
+  }
+  if (-not [string]::IsNullOrWhiteSpace($ExtraIgnore)) {
+    foreach ($p in ($ExtraIgnore -split ",")) {
+      $t = $p.Trim()
+      if ($t) { $ignore.Add($t) | Out-Null }
+    }
+  }
+
+  $repArgs = New-Object System.Collections.Generic.List[string]
+  if ($Compress) { $repArgs.Add("--compress") | Out-Null }
+  $repArgs.Add("-o") | Out-Null
+  $repArgs.Add($repomixOut) | Out-Null
+  $repArgs.Add("--instruction-file-path") | Out-Null
+  $repArgs.Add($injectPath) | Out-Null
+  $repArgs.Add("--ignore") | Out-Null
+  $repArgs.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
+
+  Write-Step "Running repomix (this can take a while)"
+  $r = Try-Cmd "npx.cmd" (@("--yes","repomix@latest") + $repArgs.ToArray())
+  if ($r.Code -ne 0) { throw "repomix failed.`n$r" }
+
+  $assetLines = @()
+  $assetLines += "# ASSET_MANIFEST"
+  $assetLines += ""
+  $assetLines += "Common UI assets and whether they appear in repomix-output.xml."
+  $assetLines += ""
+  $xmlText = ""
+  try { $xmlText = Get-Content -Raw -Path $repomixOut -ErrorAction Stop } catch { $xmlText = "" }
+
+  $assetPaths = New-Object System.Collections.Generic.List[string]
+  $assetPaths.Add("web/static/favicon.ico") | Out-Null
+
+  $staticDir = Join-Path $workDir "web\static"
+  if (Test-Path $staticDir) {
+    $cands = Get-ChildItem -Path $staticDir -Recurse -File -Include *.ico,*.svg -ErrorAction SilentlyContinue | Select-Object -First 50
+    foreach ($f in $cands) { $assetPaths.Add((RelPathUnix $workDir $f.FullName)) | Out-Null }
+  }
+
+  $assetPaths = $assetPaths | Sort-Object -Unique
+  foreach ($ap in $assetPaths) {
+    $exists = Test-Path (Join-Path $workDir ($ap -replace '/','\'))
+    $inPack = $false
+    if ($xmlText) { $inPack = $xmlText.Contains($ap) }
+    $assetLines += ("- " + $ap + " | exists=" + ($(if ($exists) {"yes"} else {"no"})) + " | in-repomix=" + ($(if ($inPack) {"yes"} else {"no"})))
+  }
+
+  $assetPath = Join-Path $outDir "ASSET_MANIFEST.md"
+  Write-Step "Writing ASSET_MANIFEST.md"
+  Write-Utf8NoBom $assetPath ($assetLines -join "`n")
+
+  $sum = @()
+  $sum += "AIPACK complete"
+  $sum += "outDir: $outDir"
+  $sum += "repomix: $repomixOut"
+  $sum += "diff: $patchPath"
+  if ($Staged) { $sum += "staged diff: " + (Join-Path $outDir "patch.staged.diff") }
+  $sumPath = Join-Path $outDir "AIPACK_SUMMARY.txt"
+  Write-Step "Writing AIPACK_SUMMARY.txt"
+  Write-Utf8NoBom $sumPath ($sum -join "`n")
+
+  if ($Zip) {
+    Write-Step "Creating zip archive"
+    $zipPath = Join-Path $invocationDir ($OutName + ".zip")
+    if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+    Compress-Archive -Path (Join-Path $outDir "*") -DestinationPath $zipPath -Force
+    Write-Host "Wrote $zipPath"
+  } else {
+    Write-Host "Wrote $outDir"
+  }
+
+} finally {
+  Pop-Location
+}
+</file>
+
+<file path="uninstall.ps1">
+param(
+  [string]$InstallDir = (Join-Path $env:USERPROFILE "bin"),
+  [switch]$KeepPath
+)
+
+$ErrorActionPreference = "Stop"
+
+$dstPs1 = Join-Path $InstallDir "aipack.ps1"
+$dstCmd = Join-Path $InstallDir "aipack.cmd"
+
+Remove-Item -Force -ErrorAction SilentlyContinue $dstPs1, $dstCmd
+
+if (-not $KeepPath) {
+  $userPath = [Environment]::GetEnvironmentVariable("Path","User")
+  if ($userPath) {
+    $parts = $userPath.Split(";") | Where-Object { $_ -and $_.Trim() }
+    $kept = @()
+    foreach ($p in $parts) {
+      if ($p.TrimEnd("\") -ine $InstallDir.TrimEnd("\")) { $kept += $p }
+    }
+    [Environment]::SetEnvironmentVariable("Path", ($kept -join ";"), "User")
+  }
+}
+
+Write-Host "Uninstalled aipack from: $InstallDir"
+</file>
+
+<file path="install.ps1">
+param(
+  [string]$InstallDir = (Join-Path $env:USERPROFILE "bin"),
+  [switch]$NoPath,
+  [switch]$Force,
+  [switch]$SkipDeps,
+  [switch]$NoWarmup
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$repoRoot = $PSScriptRoot
+$src = Join-Path $repoRoot "src\aipack.ps1"
+if (-not (Test-Path $src)) { throw "Missing $src. Run install.ps1 from a cloned aipack repo." }
+
+function Is-Admin {
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $p = New-Object Security.Principal.WindowsPrincipal($id)
+  return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Refresh-Path {
+  $m = [Environment]::GetEnvironmentVariable("Path","Machine")
+  $u = [Environment]::GetEnvironmentVariable("Path","User")
+  $joined = @()
+  if ($m) { $joined += $m }
+  if ($u) { $joined += $u }
+  $env:Path = ($joined -join ";").Trim(";")
+}
+
+function Cmd-Exists([string]$name) {
+  return $null -ne (Get-Command $name -ErrorAction SilentlyContinue)
+}
+
+function Ensure-FromCommonPaths([string]$exeName, [string[]]$dirs) {
+  if (Cmd-Exists $exeName) { return $true }
+  foreach ($d in $dirs) {
+    $p = Join-Path $d $exeName
+    if (Test-Path $p) {
+      $env:Path = "$d;$env:Path"
+      return $true
+    }
+  }
+  return $false
+}
+
+function Add-ToUserPath([string]$dir) {
+  $dirNorm = $dir.TrimEnd("\")
+  $userPath = [Environment]::GetEnvironmentVariable("Path","User")
+  $parts = @()
+  if ($userPath) { $parts = $userPath.Split(";") | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
+  foreach ($p in $parts) {
+    if ($p.TrimEnd("\") -ieq $dirNorm) { return }
+  }
+  $newPath = (($parts + $dirNorm) -join ";").Trim(";")
+  [Environment]::SetEnvironmentVariable("Path",$newPath,"User")
+}
+
+function Winget-Exists {
+  return $null -ne (Get-Command winget.exe -ErrorAction SilentlyContinue) -or $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
+}
+
+function Winget-Install([string]$id) {
+  if (-not (Winget-Exists)) { return $false }
+  Write-Host "Installing via winget: $id"
+  $args = @("install","-e","--id",$id,"--source","winget","--accept-package-agreements","--accept-source-agreements","--silent")
+  & winget @args | Out-Host
+  Refresh-Path
+  return $LASTEXITCODE -eq 0
+}
+
+function Winget-Upgrade([string]$id) {
+  if (-not (Winget-Exists)) { return $false }
+  Write-Host "Upgrading via winget: $id"
+  $args = @("upgrade","-e","--id",$id,"--source","winget","--accept-package-agreements","--accept-source-agreements","--silent")
+  & winget @args | Out-Host
+  Refresh-Path
+  return $LASTEXITCODE -eq 0
+}
+
+function Download-File([string]$url, [string]$outPath) {
+  Write-Host "Downloading: $url"
+  Invoke-WebRequest -Uri $url -OutFile $outPath
+}
+
+function Install-Git-Direct {
+  if (-not (Cmd-Exists "powershell")) { throw "PowerShell is required." }
+  Write-Host "Installing Git for Windows from official release feed"
+  $headers = @{ "User-Agent" = "aipack-installer" }
+  $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest" -Headers $headers
+  $asset = $rel.assets | Where-Object { $_.name -match 'Git-.*-64-bit\.exe$' -and $_.name -notmatch 'Portable' } | Select-Object -First 1
+  if (-not $asset) { throw "Could not find Git-*-64-bit.exe in latest Git for Windows release." }
+  $exe = Join-Path $env:TEMP $asset.name
+  Download-File $asset.browser_download_url $exe
+  Write-Host "Running Git installer silently"
+  $args = @("/VERYSILENT","/NORESTART","/NOCANCEL","/SP-")
+  Start-Process -FilePath $exe -ArgumentList $args -Wait
+  Refresh-Path
+}
+
+function Install-Node-LTS-Direct {
+  Write-Host "Installing Node.js LTS from nodejs.org"
+  $index = Invoke-RestMethod -Uri "https://nodejs.org/dist/index.json"
+  $lts = $index | Where-Object { $_.lts -and $_.lts -ne $false }
+  if (-not $lts) { throw "Could not find LTS releases in nodejs index." }
+  $latest = $lts | Sort-Object { [version]($_.version.TrimStart("v")) } -Descending | Select-Object -First 1
+  $ver = $latest.version
+  $arch = "x64"
+  $msiName = "node-$ver-$arch.msi"
+  $msiUrl = "https://nodejs.org/dist/$ver/$msiName"
+  $msi = Join-Path $env:TEMP $msiName
+  Download-File $msiUrl $msi
+  Write-Host "Running Node installer silently"
+  Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i",$msi,"/qn","/norestart") -Wait
+  Refresh-Path
+}
+
+function Ensure-Git {
+  Refresh-Path
+  $found = Ensure-FromCommonPaths "git.exe" @(
+    "C:\Program Files\Git\cmd",
+    "C:\Program Files (x86)\Git\cmd"
+  )
+  if ($found) { return }
+
+  if (-not $SkipDeps) {
+    $ok = (Winget-Upgrade "Git.Git")
+    if (-not $ok) { $ok = (Winget-Install "Git.Git") }
+    if (-not $ok) { Install-Git-Direct }
+  }
+
+  Refresh-Path
+  if (-not (Cmd-Exists "git")) { throw "Git install failed or git is not on PATH." }
+}
+
+function Get-NodeMajor {
+  if (-not (Cmd-Exists "node")) { return 0 }
+  $v = (& node -v).Trim()
+  $v = $v.TrimStart("v")
+  $major = [int]($v.Split(".")[0])
+  return $major
+}
+
+function Ensure-Node {
+  Refresh-Path
+  $found = Ensure-FromCommonPaths "node.exe" @(
+    "C:\Program Files\nodejs",
+    "C:\Program Files (x86)\nodejs"
+  )
+  if (-not $found) {
+    $found = Ensure-FromCommonPaths "npx.cmd" @(
+      "C:\Program Files\nodejs",
+      "C:\Program Files (x86)\nodejs"
+    )
+  }
+
+  $major = Get-NodeMajor
+  $need = ($major -lt 18)
+
+  if ($need -and (-not $SkipDeps)) {
+    $ok = (Winget-Upgrade "OpenJS.NodeJS.LTS")
+    if (-not $ok) { $ok = (Winget-Install "OpenJS.NodeJS.LTS") }
+    if (-not $ok) { $ok = (Winget-Upgrade "OpenJS.NodeJS") }
+    if (-not $ok) { $ok = (Winget-Install "OpenJS.NodeJS") }
+    if (-not $ok) { Install-Node-LTS-Direct }
+  }
+
+  Refresh-Path
+  if (-not (Cmd-Exists "node")) { throw "Node install failed or node is not on PATH." }
+  if (-not (Cmd-Exists "npm")) { throw "npm is missing (Node install incomplete)." }
+  if (-not (Cmd-Exists "npx.cmd")) { throw "npx.cmd is missing (Node install incomplete)." }
+
+  $major2 = Get-NodeMajor
+  if ($major2 -lt 18) { throw "Node is too old (need >= 18). Found: $(& node -v)" }
+}
+
+function Warmup-Repomix {
+  if ($NoWarmup) { return }
+  if (-not (Cmd-Exists "npx.cmd")) { return }
+  Write-Host "Warming up repomix (downloads once via npx, cached afterwards)"
+  try {
+    & npx.cmd --yes repomix@latest --version | Out-Host
+  } catch {
+    try { & npx.cmd repomix@latest --version | Out-Host } catch { }
+  }
+}
+
+if (-not $SkipDeps) {
+  if (-not (Is-Admin)) {
+    Write-Host "Note: dependency installs may require an elevated terminal on some machines."
+  }
+  Ensure-Git
+  Ensure-Node
+  Warmup-Repomix
+}
+
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+$dstPs1 = Join-Path $InstallDir "aipack.ps1"
+$dstCmd = Join-Path $InstallDir "aipack.cmd"
+
+if ((Test-Path $dstPs1 -or Test-Path $dstCmd) -and (-not $Force)) {
+  throw "aipack already installed in $InstallDir. Re run with -Force to overwrite."
+}
+
+Copy-Item -Force $src $dstPs1
+
+@"
+@echo off
+powershell -ExecutionPolicy Bypass -File "%~dp0aipack.ps1" %*
+"@ | Set-Content -Encoding ASCII -Path $dstCmd
+
+if (-not $NoPath) { Add-ToUserPath $InstallDir }
+
+Write-Host ""
+Write-Host "Installed aipack to: $InstallDir"
+Write-Host "Try: aipack help"
+Write-Host ""
+</file>
+
+<file path="README.md">
+# aipack
+
+Creates an AI friendly snapshot of the current git repo folder:
+- repomix-output.xml
+- patch.diff (git diff --no-color)
+- REPO_INFO.md and other metadata (depends on script version)
+
+## Install
+In PowerShell from this repo folder:
+.\install.ps1
+
+Open a new terminal:
+aipack help
+
+## Update
+git pull
+.\install.ps1 -Force
+
+## Uninstall
+.\uninstall.ps1
+
+Installer now ensures git + node are installed (winget preferred, official installers as fallback).
+</file>
+
+</files>
+
+
+
+<instruction>
+AIPACK snapshot metadata
+
+repo: aipack
+utc: 20251222-231913
+branch: main
+commit: ed140887817a2ea9f307375af08a03e870b09f0a
+dirty: yes
+
+Notes for AI:
+- repomix-output.xml is the packed snapshot of this folder.
+- patch.diff (and optional patch.staged.diff) contain git diffs from this same snapshot.
+- See REPO_INFO.md for full environment and repo metadata.
+</instruction>
+</file>
+
+<file path="src/aipack.ps1">
+param(
+  [Parameter(Position=0)]
+  [string]$Arg = "",
+  [Alias("Name")]
+  [string]$OutName = "",
+  [string]$RepoName = "",
+  [switch]$Zip,
+  [switch]$Staged,
+  [switch]$NoRemote,
+  [switch]$Lean,
+  [string]$OpenAPIUrl = "",
+  [switch]$Compress,
+  [string]$ExtraIgnore = ""
+)
+
+$AIPACK_VERSION = "0.3.1"
+
+function Write-Utf8NoBom([string]$Path, [string]$Content) {
+  $enc = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
+
+function Try-Cmd([string]$Exe, [string[]]$CmdArgs) {
+  try {
+    $out = & $Exe @CmdArgs 2>&1
+    $code = $LASTEXITCODE
+
+    if ($null -eq $out) { $outText = "" }
+    elseif ($out -is [System.Array]) { $outText = ($out -join "`n") }
+    else { $outText = [string]$out }
+
+    return [pscustomobject]@{ Out = $outText; Code = $code }
+  } catch {
+    return [pscustomobject]@{ Out = ($_ | Out-String); Code = 1 }
+  }
+}
+
+function Write-Step([string]$Message) {
+  $ts = (Get-Date).ToString("HH:mm:ss")
+  Write-Host ("[$ts] " + $Message)
+}
+
+
+function Sanitize-Remote([string]$Url) {
+  if ([string]::IsNullOrWhiteSpace($Url)) { return "" }
+  return ($Url -replace '://([^/@:]+):([^/@]+)@', '://***:***@')
+}
+
+function RelPathUnix([string]$Base, [string]$Full) {
+  $rel = $Full.Substring($Base.Length).TrimStart('\','/')
+  return ($rel -replace '\\','/')
+}
+
+function Show-Help {
+  Write-Host ""
+  Write-Host "aipack v$AIPACK_VERSION"
+  Write-Host ""
+  Write-Host "Usage (run from the repo folder you want packed):"
+  Write-Host "  aipack"
+  Write-Host "  aipack <outFolderName>"
+  Write-Host "  aipack help"
+  Write-Host "  aipack list"
+  Write-Host "  aipack doctor"
+  Write-Host ""
+  Write-Host "Options:"
+  Write-Host "  -Zip               Create <outFolder>.zip next to the folder"
+  Write-Host "  -Staged            Also write patch.staged.diff"
+  Write-Host "  -NoRemote          Omit origin URL from REPO_INFO.md"
+  Write-Host "  -Lean              Ignore common noisy outputs (preflight/mutations txt)"
+  Write-Host "  -Compress          Pass --compress to repomix"
+  Write-Host "  -OpenAPIUrl <url>  Fetch openapi.json (ex: http://127.0.0.1:8000/openapi.json)"
+  Write-Host "  -ExtraIgnore <csv> Extra repomix ignore patterns, comma separated"
+  Write-Host ""
+  Write-Host "Outputs (inside the out folder):"
+  Write-Host "  repomix-output.xml"
+  Write-Host "  patch.diff (plus patch.staged.diff if -Staged)"
+  Write-Host "  REPO_INFO.md"
+  Write-Host "  ASSET_MANIFEST.md"
+  Write-Host "  AIPACK_SUMMARY.txt"
+  Write-Host ""
+}
+
+function Run-Doctor {
+  Write-Host ""
+  Write-Host "AIPACK doctor"
+  Write-Host ("pwd: " + (Get-Location).Path)
+  Write-Host ""
+  Write-Host "where git:"; where.exe git
+  Write-Host "where node:"; where.exe node
+  Write-Host "where npm:"; where.exe npm
+  Write-Host "where npx:"; where.exe npx
+  Write-Host ""
+  Write-Host "git version:"; git --version
+  Write-Host "node version:"; node -v
+  Write-Host "npm version:"; npm -v
+  Write-Host "repomix version:"; npx.cmd --yes repomix@latest --version
+  Write-Host ""
+  $g = Try-Cmd "git" @("rev-parse","--is-inside-work-tree")
+  Write-Host ("git repo: " + ($(if ($g.Code -eq 0) {"yes"} else {"no"})))
+  if ($g.Code -eq 0) {
+    Write-Host "git status -sb:"
+    git status -sb
+  }
+  Write-Host ""
+}
+
+if ($Arg -in @("help","list","-h","--help","/?")) { Show-Help; exit 0 }
+if ($Arg -eq "doctor") { Run-Doctor; exit 0 }
+
+if ($Arg -and [string]::IsNullOrWhiteSpace($OutName)) { $OutName = $Arg }
+
+$invocationDir = (Get-Location).Path
+$workDir = $invocationDir
+
+if ([string]::IsNullOrWhiteSpace($RepoName)) { $RepoName = (Split-Path $workDir -Leaf) }
+
+$tsUtc = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
+if ([string]::IsNullOrWhiteSpace($OutName)) {
+  $safeRepo = ($RepoName -replace '[^A-Za-z0-9._-]','_')
+  $OutName = "_aipack_${safeRepo}_$tsUtc"
+}
+
+$outDir = Join-Path $invocationDir $OutName
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Missing git in PATH." }
+if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing npx.cmd in PATH." }
+
+Push-Location $workDir
+try {
+  Write-Step "aipack v$AIPACK_VERSION starting"
+  Write-Step "Working dir: $workDir"
+  Write-Step "Output dir: $outDir"
+  Write-Step "Checking git repository"
+	$inside = (Try-Cmd "git" @("rev-parse","--is-inside-work-tree")).Out.Trim()
+	if ($inside -ne "true") { throw "Not a git repository: $workDir`n$inside" }
+
+  Write-Step "Collecting git and environment metadata"
+  $branch = (Try-Cmd "git" @("rev-parse","--abbrev-ref","HEAD")).Out.Trim()
+  $sha = (Try-Cmd "git" @("rev-parse","HEAD")).Out.Trim()
+  $statusShort = (Try-Cmd "git" @("status","-sb")).Out.TrimEnd()
+  $porc = (Try-Cmd "git" @("status","--porcelain")).Out
+  $dirty = -not [string]::IsNullOrWhiteSpace($porc)
+
+  $origin = ""
+  if (-not $NoRemote) {
+    $o = Try-Cmd "git" @("remote","get-url","origin")
+    if ($o.Code -eq 0) { $origin = Sanitize-Remote($o.Out.Trim()) }
+  }
+
+  $gitVer = (Try-Cmd "git" @("--version")).Out.Trim()
+  $nodeVer = (Try-Cmd "node" @("-v")).Out.Trim()
+  $npmVer = (Try-Cmd "npm" @("-v")).Out.Trim()
+  $pyVer = ""
+  if (Get-Command python -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "python" @("--version")).Out.Trim() }
+  elseif (Get-Command py -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "py" @("-V")).Out.Trim() }
+  $repomixVer = (Try-Cmd "npx.cmd" @("--yes","repomix@latest","--version")).Out.Trim()
+
+  $startup = Join-Path $workDir "docs\STARTUP.md"
+  $readme = Join-Path $workDir "README.md"
+
+  $tracked = (Try-Cmd "git" @("ls-files")).Out -split "`n"
+  $lockNeedles = @("package-lock.json","pnpm-lock.yaml","yarn.lock","bun.lockb","poetry.lock","Pipfile.lock","requirements.lock","requirements.txt")
+  $lockHits = @()
+  foreach ($n in $lockNeedles) {
+    $m = $tracked | Where-Object { $_.Trim().ToLower().EndsWith($n.ToLower()) }
+    if ($m) { $lockHits += $m }
+  }
+  $lockHits = $lockHits | Sort-Object -Unique
+
+  $expected = @("LICENSE","LICENSE.md","LICENSE.txt","CHANGELOG.md","RELEASE_NOTES.md","CODE_OF_CONDUCT.md",".github/CODEOWNERS")
+  $expectedStatus = foreach ($p in $expected) {
+    $full = Join-Path $workDir ($p -replace '/','\')
+    [pscustomobject]@{ Path = $p; Present = (Test-Path $full) }
+  }
+
+  $repoInfoLines = @()
+  $repoInfoLines += "# REPO_INFO"
+  $repoInfoLines += ""
+  $repoInfoLines += "repo name: $RepoName"
+  $repoInfoLines += "snapshot timestamp (UTC): $tsUtc"
+  $repoInfoLines += "packed from: $workDir"
+  $repoInfoLines += "aipack version: $AIPACK_VERSION"
+  $repoInfoLines += "repomix: $repomixVer"
+  if ($pyVer) { $repoInfoLines += "python: $pyVer" }
+  $repoInfoLines += "node: $nodeVer"
+  $repoInfoLines += "npm: $npmVer"
+  $repoInfoLines += "git: $gitVer"
+  $repoInfoLines += ""
+  $repoInfoLines += "git branch: $branch"
+  $repoInfoLines += "git commit: $sha"
+  $repoInfoLines += ("working tree dirty: " + ($(if ($dirty) {"yes"} else {"no"})))
+  if (-not $NoRemote) {
+    $repoInfoLines += ("origin url: " + ($(if ($origin) {$origin} else {"(none)"})))
+  } else {
+    $repoInfoLines += "origin url: (omitted)"
+  }
+  $repoInfoLines += ""
+  $repoInfoLines += "git status:"
+  $repoInfoLines += '```'
+  $repoInfoLines += $statusShort
+  $repoInfoLines += '```'
+  $repoInfoLines += ""
+  $repoInfoLines += "recent commits:"
+  $repoInfoLines += '```'
+  $repoInfoLines += (Try-Cmd "git" @("log","-5","--oneline","--decorate")).Out.TrimEnd()
+  $repoInfoLines += '```'
+  $repoInfoLines += ""
+  $repoInfoLines += "how to run pointers:"
+  $repoInfoLines += ("- docs/STARTUP.md: " + ($(if (Test-Path $startup) {"present"} else {"missing"})))
+  $repoInfoLines += ("- README.md: " + ($(if (Test-Path $readme) {"present"} else {"missing"})))
+  $repoInfoLines += ""
+  $repoInfoLines += "lockfiles tracked in git:"
+  if ($lockHits.Count -gt 0) { foreach ($h in $lockHits) { $repoInfoLines += "- $h" } }
+  else { $repoInfoLines += "- (none found)" }
+  $repoInfoLines += ""
+  $repoInfoLines += "common shareable files present:"
+  foreach ($e in $expectedStatus) { $repoInfoLines += ("- " + $e.Path + ": " + ($(if ($e.Present) {"present"} else {"missing"}))) }
+
+  $repoInfoPath = Join-Path $outDir "REPO_INFO.md"
+  Write-Step "Writing REPO_INFO.md"
+  Write-Utf8NoBom $repoInfoPath ($repoInfoLines -join "`n")
+
+  $injectPath = Join-Path $outDir "AIPACK_INSTRUCTIONS.md"
+  Write-Step "Writing AIPACK_INSTRUCTIONS.md"
+  $injectLines = @()
+  $injectLines += "AIPACK snapshot metadata"
+  $injectLines += ""
+  $injectLines += "repo: $RepoName"
+  $injectLines += "utc: $tsUtc"
+  $injectLines += "branch: $branch"
+  $injectLines += "commit: $sha"
+  $injectLines += ("dirty: " + ($(if ($dirty) {"yes"} else {"no"})))
+  $injectLines += ""
+  $injectLines += "Notes for AI:"
+  $injectLines += "- repomix-output.xml is the packed snapshot of this folder."
+  $injectLines += "- patch.diff (and optional patch.staged.diff) contain git diffs from this same snapshot."
+  $injectLines += "- See REPO_INFO.md for full environment and repo metadata."
+  Write-Utf8NoBom $injectPath ($injectLines -join "`n")
+
+  $patchPath = Join-Path $outDir "patch.diff"
+  Write-Step "Writing patch.diff"
+  $diff = Try-Cmd "git" @("diff","--no-color")
+  if ($diff.Code -ne 0) { throw "git diff failed." }
+  Write-Utf8NoBom $patchPath $diff.Out
+
+  if ($Staged) {
+    Write-Step "Writing patch.staged.diff"
+    $stagedPath = Join-Path $outDir "patch.staged.diff"
+    $sdiff = Try-Cmd "git" @("diff","--cached","--no-color")
+    if ($sdiff.Code -eq 0) { Write-Utf8NoBom $stagedPath $sdiff.Out }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($OpenAPIUrl)) {
+    $openApiPath = Join-Path $outDir "openapi.json"
+    Write-Step "Fetching OpenAPI: $OpenAPIUrl"
+    try {
+      $resp = Invoke-WebRequest -Uri $OpenAPIUrl -TimeoutSec 10
+      if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+        Write-Utf8NoBom $openApiPath $resp.Content
+      }
+    } catch { }
+  }
+
+  $repomixOut = Join-Path $outDir "repomix-output.xml"
+
+  $ignore = New-Object System.Collections.Generic.List[string]
+  $ignore.Add("$OutName/**") | Out-Null
+  $ignore.Add("_aipack_*/**") | Out-Null
+  $ignore.Add("_ai_pack_*/**") | Out-Null
+  if ($Lean) {
+    $ignore.Add("preflight_output*.txt") | Out-Null
+    $ignore.Add("**/preflight_output*.txt") | Out-Null
+    $ignore.Add("mutations_output*.txt") | Out-Null
+    $ignore.Add("**/mutations_output*.txt") | Out-Null
+  }
+  if (-not [string]::IsNullOrWhiteSpace($ExtraIgnore)) {
+    foreach ($p in ($ExtraIgnore -split ",")) {
+      $t = $p.Trim()
+      if ($t) { $ignore.Add($t) | Out-Null }
+    }
+  }
+
+  $repArgs = New-Object System.Collections.Generic.List[string]
+  if ($Compress) { $repArgs.Add("--compress") | Out-Null }
+  $repArgs.Add("-o") | Out-Null
+  $repArgs.Add($repomixOut) | Out-Null
+  $repArgs.Add("--instruction-file-path") | Out-Null
+  $repArgs.Add($injectPath) | Out-Null
+  $repArgs.Add("--ignore") | Out-Null
+  $repArgs.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
+
+  Write-Step "Running repomix (this can take a while)"
+  $r = Try-Cmd "npx.cmd" (@("--yes","repomix@latest") + $repArgs.ToArray())
+  if ($r.Code -ne 0) { throw "repomix failed.`n$r" }
+
+  $assetLines = @()
+  $assetLines += "# ASSET_MANIFEST"
+  $assetLines += ""
+  $assetLines += "Common UI assets and whether they appear in repomix-output.xml."
+  $assetLines += ""
+
+  $assetPaths = New-Object System.Collections.Generic.List[string]
+  $assetPaths.Add("web/static/favicon.ico") | Out-Null
+
+  $staticDir = Join-Path $workDir "web\static"
+  if (Test-Path $staticDir) {
+    $cands = Get-ChildItem -Path $staticDir -Recurse -File -Include *.ico,*.svg -ErrorAction SilentlyContinue | Select-Object -First 50
+    foreach ($f in $cands) { $assetPaths.Add((RelPathUnix $workDir $f.FullName)) | Out-Null }
+  }
+
+  $assetPaths = @($assetPaths | Sort-Object -Unique)
+  $inPackLookup = @{}
+  if ($assetPaths.Count -gt 0 -and (Test-Path $repomixOut)) {
+    Write-Step "Scanning repomix output for assets"
+    try {
+      $pattern = ($assetPaths | ForEach-Object { [regex]::Escape($_) }) -join "|"
+      if ($pattern) {
+        $matches = Select-String -Path $repomixOut -Pattern $pattern -AllMatches -ErrorAction Stop
+        foreach ($m in $matches) {
+          foreach ($hit in $m.Matches) { $inPackLookup[$hit.Value] = $true }
+        }
+      }
+    } catch { }
+  }
+  foreach ($ap in $assetPaths) {
+    $exists = Test-Path (Join-Path $workDir ($ap -replace '/','\'))
+    $inPack = $false
+    if ($inPackLookup.ContainsKey($ap)) { $inPack = $true }
+    $assetLines += ("- " + $ap + " | exists=" + ($(if ($exists) {"yes"} else {"no"})) + " | in-repomix=" + ($(if ($inPack) {"yes"} else {"no"})))
+  }
+
+  $assetPath = Join-Path $outDir "ASSET_MANIFEST.md"
+  Write-Step "Writing ASSET_MANIFEST.md"
+  Write-Utf8NoBom $assetPath ($assetLines -join "`n")
+
+  $sum = @()
+  $sum += "AIPACK complete"
+  $sum += "outDir: $outDir"
+  $sum += "repomix: $repomixOut"
+  $sum += "diff: $patchPath"
+  if ($Staged) { $sum += "staged diff: " + (Join-Path $outDir "patch.staged.diff") }
+  $sumPath = Join-Path $outDir "AIPACK_SUMMARY.txt"
+  Write-Step "Writing AIPACK_SUMMARY.txt"
+  Write-Utf8NoBom $sumPath ($sum -join "`n")
+
+  if ($Zip) {
+    Write-Step "Creating zip archive"
+    $zipPath = Join-Path $invocationDir ($OutName + ".zip")
+    if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+    Compress-Archive -Path (Join-Path $outDir "*") -DestinationPath $zipPath -Force
+    Write-Host "Wrote $zipPath"
+  } else {
+    Write-Host "Wrote $outDir"
+  }
+
+} finally {
+  Pop-Location
+}
+</file>
+
+<file path="uninstall.ps1">
+param(
+  [string]$InstallDir = (Join-Path $env:USERPROFILE "bin"),
+  [switch]$KeepPath
+)
+
+$ErrorActionPreference = "Stop"
+
+$dstPs1 = Join-Path $InstallDir "aipack.ps1"
+$dstCmd = Join-Path $InstallDir "aipack.cmd"
+
+Remove-Item -Force -ErrorAction SilentlyContinue $dstPs1, $dstCmd
+
+if (-not $KeepPath) {
+  $userPath = [Environment]::GetEnvironmentVariable("Path","User")
+  if ($userPath) {
+    $parts = $userPath.Split(";") | Where-Object { $_ -and $_.Trim() }
+    $kept = @()
+    foreach ($p in $parts) {
+      if ($p.TrimEnd("\") -ine $InstallDir.TrimEnd("\")) { $kept += $p }
+    }
+    [Environment]::SetEnvironmentVariable("Path", ($kept -join ";"), "User")
+  }
+}
+
+Write-Host "Uninstalled aipack from: $InstallDir"
+</file>
+
+<file path="install.ps1">
+param(
+  [string]$InstallDir = (Join-Path $env:USERPROFILE "bin"),
+  [switch]$NoPath,
+  [switch]$Force,
+  [switch]$SkipDeps,
+  [switch]$NoWarmup
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$repoRoot = $PSScriptRoot
+$src = Join-Path $repoRoot "src\aipack.ps1"
+if (-not (Test-Path $src)) { throw "Missing $src. Run install.ps1 from a cloned aipack repo." }
+
+function Is-Admin {
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $p = New-Object Security.Principal.WindowsPrincipal($id)
+  return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Refresh-Path {
+  $m = [Environment]::GetEnvironmentVariable("Path","Machine")
+  $u = [Environment]::GetEnvironmentVariable("Path","User")
+  $joined = @()
+  if ($m) { $joined += $m }
+  if ($u) { $joined += $u }
+  $env:Path = ($joined -join ";").Trim(";")
+}
+
+function Cmd-Exists([string]$name) {
+  return $null -ne (Get-Command $name -ErrorAction SilentlyContinue)
+}
+
+function Ensure-FromCommonPaths([string]$exeName, [string[]]$dirs) {
+  if (Cmd-Exists $exeName) { return $true }
+  foreach ($d in $dirs) {
+    $p = Join-Path $d $exeName
+    if (Test-Path $p) {
+      $env:Path = "$d;$env:Path"
+      return $true
+    }
+  }
+  return $false
+}
+
+function Add-ToUserPath([string]$dir) {
+  $dirNorm = $dir.TrimEnd("\")
+  $userPath = [Environment]::GetEnvironmentVariable("Path","User")
+  $parts = @()
+  if ($userPath) { $parts = $userPath.Split(";") | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
+  foreach ($p in $parts) {
+    if ($p.TrimEnd("\") -ieq $dirNorm) { return }
+  }
+  $newPath = (($parts + $dirNorm) -join ";").Trim(";")
+  [Environment]::SetEnvironmentVariable("Path",$newPath,"User")
+}
+
+function Winget-Exists {
+  return $null -ne (Get-Command winget.exe -ErrorAction SilentlyContinue) -or $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
+}
+
+function Winget-Install([string]$id) {
+  if (-not (Winget-Exists)) { return $false }
+  Write-Host "Installing via winget: $id"
+  $args = @("install","-e","--id",$id,"--source","winget","--accept-package-agreements","--accept-source-agreements","--silent")
+  & winget @args | Out-Host
+  Refresh-Path
+  return $LASTEXITCODE -eq 0
+}
+
+function Winget-Upgrade([string]$id) {
+  if (-not (Winget-Exists)) { return $false }
+  Write-Host "Upgrading via winget: $id"
+  $args = @("upgrade","-e","--id",$id,"--source","winget","--accept-package-agreements","--accept-source-agreements","--silent")
+  & winget @args | Out-Host
+  Refresh-Path
+  return $LASTEXITCODE -eq 0
+}
+
+function Download-File([string]$url, [string]$outPath) {
+  Write-Host "Downloading: $url"
+  Invoke-WebRequest -Uri $url -OutFile $outPath
+}
+
+function Install-Git-Direct {
+  if (-not (Cmd-Exists "powershell")) { throw "PowerShell is required." }
+  Write-Host "Installing Git for Windows from official release feed"
+  $headers = @{ "User-Agent" = "aipack-installer" }
+  $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest" -Headers $headers
+  $asset = $rel.assets | Where-Object { $_.name -match 'Git-.*-64-bit\.exe$' -and $_.name -notmatch 'Portable' } | Select-Object -First 1
+  if (-not $asset) { throw "Could not find Git-*-64-bit.exe in latest Git for Windows release." }
+  $exe = Join-Path $env:TEMP $asset.name
+  Download-File $asset.browser_download_url $exe
+  Write-Host "Running Git installer silently"
+  $args = @("/VERYSILENT","/NORESTART","/NOCANCEL","/SP-")
+  Start-Process -FilePath $exe -ArgumentList $args -Wait
+  Refresh-Path
+}
+
+function Install-Node-LTS-Direct {
+  Write-Host "Installing Node.js LTS from nodejs.org"
+  $index = Invoke-RestMethod -Uri "https://nodejs.org/dist/index.json"
+  $lts = $index | Where-Object { $_.lts -and $_.lts -ne $false }
+  if (-not $lts) { throw "Could not find LTS releases in nodejs index." }
+  $latest = $lts | Sort-Object { [version]($_.version.TrimStart("v")) } -Descending | Select-Object -First 1
+  $ver = $latest.version
+  $arch = "x64"
+  $msiName = "node-$ver-$arch.msi"
+  $msiUrl = "https://nodejs.org/dist/$ver/$msiName"
+  $msi = Join-Path $env:TEMP $msiName
+  Download-File $msiUrl $msi
+  Write-Host "Running Node installer silently"
+  Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i",$msi,"/qn","/norestart") -Wait
+  Refresh-Path
+}
+
+function Ensure-Git {
+  Refresh-Path
+  $found = Ensure-FromCommonPaths "git.exe" @(
+    "C:\Program Files\Git\cmd",
+    "C:\Program Files (x86)\Git\cmd"
+  )
+  if ($found) { return }
+
+  if (-not $SkipDeps) {
+    $ok = (Winget-Upgrade "Git.Git")
+    if (-not $ok) { $ok = (Winget-Install "Git.Git") }
+    if (-not $ok) { Install-Git-Direct }
+  }
+
+  Refresh-Path
+  if (-not (Cmd-Exists "git")) { throw "Git install failed or git is not on PATH." }
+}
+
+function Get-NodeMajor {
+  if (-not (Cmd-Exists "node")) { return 0 }
+  $v = (& node -v).Trim()
+  $v = $v.TrimStart("v")
+  $major = [int]($v.Split(".")[0])
+  return $major
+}
+
+function Ensure-Node {
+  Refresh-Path
+  $found = Ensure-FromCommonPaths "node.exe" @(
+    "C:\Program Files\nodejs",
+    "C:\Program Files (x86)\nodejs"
+  )
+  if (-not $found) {
+    $found = Ensure-FromCommonPaths "npx.cmd" @(
+      "C:\Program Files\nodejs",
+      "C:\Program Files (x86)\nodejs"
+    )
+  }
+
+  $major = Get-NodeMajor
+  $need = ($major -lt 18)
+
+  if ($need -and (-not $SkipDeps)) {
+    $ok = (Winget-Upgrade "OpenJS.NodeJS.LTS")
+    if (-not $ok) { $ok = (Winget-Install "OpenJS.NodeJS.LTS") }
+    if (-not $ok) { $ok = (Winget-Upgrade "OpenJS.NodeJS") }
+    if (-not $ok) { $ok = (Winget-Install "OpenJS.NodeJS") }
+    if (-not $ok) { Install-Node-LTS-Direct }
+  }
+
+  Refresh-Path
+  if (-not (Cmd-Exists "node")) { throw "Node install failed or node is not on PATH." }
+  if (-not (Cmd-Exists "npm")) { throw "npm is missing (Node install incomplete)." }
+  if (-not (Cmd-Exists "npx.cmd")) { throw "npx.cmd is missing (Node install incomplete)." }
+
+  $major2 = Get-NodeMajor
+  if ($major2 -lt 18) { throw "Node is too old (need >= 18). Found: $(& node -v)" }
+}
+
+function Warmup-Repomix {
+  if ($NoWarmup) { return }
+  if (-not (Cmd-Exists "npx.cmd")) { return }
+  Write-Host "Warming up repomix (downloads once via npx, cached afterwards)"
+  try {
+    & npx.cmd --yes repomix@latest --version | Out-Host
+  } catch {
+    try { & npx.cmd repomix@latest --version | Out-Host } catch { }
+  }
+}
+
+if (-not $SkipDeps) {
+  if (-not (Is-Admin)) {
+    Write-Host "Note: dependency installs may require an elevated terminal on some machines."
+  }
+  Ensure-Git
+  Ensure-Node
+  Warmup-Repomix
+}
+
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+$dstPs1 = Join-Path $InstallDir "aipack.ps1"
+$dstCmd = Join-Path $InstallDir "aipack.cmd"
+
+if ((Test-Path $dstPs1 -or Test-Path $dstCmd) -and (-not $Force)) {
+  throw "aipack already installed in $InstallDir. Re run with -Force to overwrite."
+}
+
+Copy-Item -Force $src $dstPs1
+
+@"
+@echo off
+powershell -ExecutionPolicy Bypass -File "%~dp0aipack.ps1" %*
+"@ | Set-Content -Encoding ASCII -Path $dstCmd
+
+if (-not $NoPath) { Add-ToUserPath $InstallDir }
+
+Write-Host ""
+Write-Host "Installed aipack to: $InstallDir"
+Write-Host "Try: aipack help"
+Write-Host ""
+</file>
+
+<file path="README.md">
+# aipack
+
+Creates an AI friendly snapshot of the current git repo folder:
+- repomix-output.xml
+- patch.diff (git diff --no-color)
+- REPO_INFO.md and other metadata (depends on script version)
+
+## Install
+In PowerShell from this repo folder:
+.\install.ps1
+
+Open a new terminal:
+aipack help
+
+## Update
+git pull
+.\install.ps1 -Force
+
+## Uninstall
+.\uninstall.ps1
+
+Installer now ensures git + node are installed (winget preferred, official installers as fallback).
+</file>
+
+</files>
+
+
+
+<instruction>
+AIPACK snapshot metadata
+
+repo: aipack
+utc: 20251222-232328
+branch: main
+commit: ed140887817a2ea9f307375af08a03e870b09f0a
+dirty: yes
+
+Notes for AI:
+- repomix-output.xml is the packed snapshot of this folder.
+- patch.diff (and optional patch.staged.diff) contain git diffs from this same snapshot.
+- See REPO_INFO.md for full environment and repo metadata.
+</instruction>

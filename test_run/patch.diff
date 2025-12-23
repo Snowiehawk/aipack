@@ -1,0 +1,115 @@
+warning: in the working copy of 'src/aipack.ps1', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/aipack.ps1 b/src/aipack.ps1
+index 01ebbc6..ee71fd9 100644
+--- a/src/aipack.ps1
++++ b/src/aipack.ps1
+@@ -35,6 +35,11 @@ function Try-Cmd([string]$Exe, [string[]]$CmdArgs) {
+   }
+ }
+ 
++function Write-Step([string]$Message) {
++  $ts = (Get-Date).ToString("HH:mm:ss")
++  Write-Host ("[$ts] " + $Message)
++}
++
+ 
+ function Sanitize-Remote([string]$Url) {
+   if ([string]::IsNullOrWhiteSpace($Url)) { return "" }
+@@ -88,7 +93,7 @@ function Run-Doctor {
+   Write-Host "git version:"; git --version
+   Write-Host "node version:"; node -v
+   Write-Host "npm version:"; npm -v
+-  Write-Host "repomix version:"; npx.cmd repomix@latest --version
++  Write-Host "repomix version:"; npx.cmd --yes repomix@latest --version
+   Write-Host ""
+   $g = Try-Cmd "git" @("rev-parse","--is-inside-work-tree")
+   Write-Host ("git repo: " + ($(if ($g.Code -eq 0) {"yes"} else {"no"})))
+@@ -123,10 +128,14 @@ if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing n
+ 
+ Push-Location $workDir
+ try {
++  Write-Step "aipack v$AIPACK_VERSION starting"
++  Write-Step "Working dir: $workDir"
++  Write-Step "Output dir: $outDir"
++  Write-Step "Checking git repository"
+ 	$inside = (Try-Cmd "git" @("rev-parse","--is-inside-work-tree")).Out.Trim()
+ 	if ($inside -ne "true") { throw "Not a git repository: $workDir`n$inside" }
+ 
+-
++  Write-Step "Collecting git and environment metadata"
+   $branch = (Try-Cmd "git" @("rev-parse","--abbrev-ref","HEAD")).Out.Trim()
+   $sha = (Try-Cmd "git" @("rev-parse","HEAD")).Out.Trim()
+   $statusShort = (Try-Cmd "git" @("status","-sb")).Out.TrimEnd()
+@@ -145,7 +154,7 @@ try {
+   $pyVer = ""
+   if (Get-Command python -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "python" @("--version")).Out.Trim() }
+   elseif (Get-Command py -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "py" @("-V")).Out.Trim() }
+-  $repomixVer = (Try-Cmd "npx.cmd" @("repomix@latest","--version")).Out.Trim()
++  $repomixVer = (Try-Cmd "npx.cmd" @("--yes","repomix@latest","--version")).Out.Trim()
+ 
+   $startup = Join-Path $workDir "docs\STARTUP.md"
+   $readme = Join-Path $workDir "README.md"
+@@ -209,9 +218,11 @@ try {
+   foreach ($e in $expectedStatus) { $repoInfoLines += ("- " + $e.Path + ": " + ($(if ($e.Present) {"present"} else {"missing"}))) }
+ 
+   $repoInfoPath = Join-Path $outDir "REPO_INFO.md"
++  Write-Step "Writing REPO_INFO.md"
+   Write-Utf8NoBom $repoInfoPath ($repoInfoLines -join "`n")
+ 
+   $injectPath = Join-Path $outDir "AIPACK_INSTRUCTIONS.md"
++  Write-Step "Writing AIPACK_INSTRUCTIONS.md"
+   $injectLines = @()
+   $injectLines += "AIPACK snapshot metadata"
+   $injectLines += ""
+@@ -228,11 +239,13 @@ try {
+   Write-Utf8NoBom $injectPath ($injectLines -join "`n")
+ 
+   $patchPath = Join-Path $outDir "patch.diff"
++  Write-Step "Writing patch.diff"
+   $diff = Try-Cmd "git" @("diff","--no-color")
+   if ($diff.Code -ne 0) { throw "git diff failed." }
+   Write-Utf8NoBom $patchPath $diff.Out
+ 
+   if ($Staged) {
++    Write-Step "Writing patch.staged.diff"
+     $stagedPath = Join-Path $outDir "patch.staged.diff"
+     $sdiff = Try-Cmd "git" @("diff","--cached","--no-color")
+     if ($sdiff.Code -eq 0) { Write-Utf8NoBom $stagedPath $sdiff.Out }
+@@ -240,6 +253,7 @@ try {
+ 
+   if (-not [string]::IsNullOrWhiteSpace($OpenAPIUrl)) {
+     $openApiPath = Join-Path $outDir "openapi.json"
++    Write-Step "Fetching OpenAPI: $OpenAPIUrl"
+     try {
+       $resp = Invoke-WebRequest -Uri $OpenAPIUrl -TimeoutSec 10
+       if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+@@ -276,7 +290,8 @@ try {
+   $repArgs.Add("--ignore") | Out-Null
+   $repArgs.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
+ 
+-  $r = Try-Cmd "npx.cmd" (@("repomix@latest") + $repArgs.ToArray())
++  Write-Step "Running repomix (this can take a while)"
++  $r = Try-Cmd "npx.cmd" (@("--yes","repomix@latest") + $repArgs.ToArray())
+   if ($r.Code -ne 0) { throw "repomix failed.`n$r" }
+ 
+   $assetLines = @()
+@@ -305,6 +320,7 @@ try {
+   }
+ 
+   $assetPath = Join-Path $outDir "ASSET_MANIFEST.md"
++  Write-Step "Writing ASSET_MANIFEST.md"
+   Write-Utf8NoBom $assetPath ($assetLines -join "`n")
+ 
+   $sum = @()
+@@ -314,9 +330,11 @@ try {
+   $sum += "diff: $patchPath"
+   if ($Staged) { $sum += "staged diff: " + (Join-Path $outDir "patch.staged.diff") }
+   $sumPath = Join-Path $outDir "AIPACK_SUMMARY.txt"
++  Write-Step "Writing AIPACK_SUMMARY.txt"
+   Write-Utf8NoBom $sumPath ($sum -join "`n")
+ 
+   if ($Zip) {
++    Write-Step "Creating zip archive"
+     $zipPath = Join-Path $invocationDir ($OutName + ".zip")
+     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+     Compress-Archive -Path (Join-Path $outDir "*") -DestinationPath $zipPath -Force

@@ -1,0 +1,4 @@
+AIPACK complete
+outDir: D:\Projects\aipack\test_run
+repomix: D:\Projects\aipack\test_run\repomix-output.xml
+diff: D:\Projects\aipack\test_run\patch.diff
