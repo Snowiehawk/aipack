@@ -130,7 +130,11 @@ function Ensure-Git {
   }
 
   Refresh-Path
-  if (-not (Cmd-Exists "git")) { throw "Git install failed or git is not on PATH." }
+  if (-not (Cmd-Exists "git")) {
+    $msg = "Git install failed or git is not on PATH."
+    if (-not (Is-Admin)) { $msg += " Try rerunning in an elevated terminal or install Git manually, or use -SkipDeps." }
+    throw $msg
+  }
 }
 
 function Get-NodeMajor {
@@ -166,9 +170,11 @@ function Ensure-Node {
   }
 
   Refresh-Path
-  if (-not (Cmd-Exists "node")) { throw "Node install failed or node is not on PATH." }
-  if (-not (Cmd-Exists "npm")) { throw "npm is missing (Node install incomplete)." }
-  if (-not (Cmd-Exists "npx.cmd")) { throw "npx.cmd is missing (Node install incomplete)." }
+  $hint = ""
+  if (-not (Is-Admin)) { $hint = " Try rerunning in an elevated terminal or install Node.js manually, or use -SkipDeps." }
+  if (-not (Cmd-Exists "node")) { throw "Node install failed or node is not on PATH.$hint" }
+  if (-not (Cmd-Exists "npm")) { throw "npm is missing (Node install incomplete).$hint" }
+  if (-not (Cmd-Exists "npx.cmd")) { throw "npx.cmd is missing (Node install incomplete).$hint" }
 
   $major2 = Get-NodeMajor
   if ($major2 -lt 18) { throw "Node is too old (need >= 18). Found: $(& node -v)" }
@@ -199,7 +205,8 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $dstPs1 = Join-Path $InstallDir "aipack.ps1"
 $dstCmd = Join-Path $InstallDir "aipack.cmd"
 
-if ((Test-Path $dstPs1 -or Test-Path $dstCmd) -and (-not $Force)) {
+$alreadyInstalled = (Test-Path $dstPs1) -or (Test-Path $dstCmd)
+if ($alreadyInstalled -and (-not $Force)) {
   throw "aipack already installed in $InstallDir. Re run with -Force to overwrite."
 }
 
@@ -210,7 +217,10 @@ Copy-Item -Force $src $dstPs1
 powershell -ExecutionPolicy Bypass -File "%~dp0aipack.ps1" %*
 "@ | Set-Content -Encoding ASCII -Path $dstCmd
 
-if (-not $NoPath) { Add-ToUserPath $InstallDir }
+if (-not $NoPath) {
+  Add-ToUserPath $InstallDir
+  Refresh-Path
+}
 
 Write-Host ""
 Write-Host "Installed aipack to: $InstallDir"
