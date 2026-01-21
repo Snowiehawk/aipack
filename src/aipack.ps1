@@ -121,7 +121,6 @@ if ([string]::IsNullOrWhiteSpace($OutName)) {
 }
 
 $outDir = Join-Path $invocationDir $OutName
-New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Missing git in PATH." }
 if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing npx.cmd in PATH." }
@@ -132,8 +131,11 @@ try {
   Write-Step "Working dir: $workDir"
   Write-Step "Output dir: $outDir"
   Write-Step "Checking git repository"
-	$inside = (Try-Cmd "git" @("rev-parse","--is-inside-work-tree")).Out.Trim()
-	if ($inside -ne "true") { throw "Not a git repository: $workDir`n$inside" }
+  $inside = (Try-Cmd "git" @("rev-parse","--is-inside-work-tree")).Out.Trim()
+  if ($inside -ne "true") { throw "Not a git repository: $workDir`n$inside" }
+
+  Write-Step "Creating output dir"
+  New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
   Write-Step "Collecting git and environment metadata"
   $branch = (Try-Cmd "git" @("rev-parse","--abbrev-ref","HEAD")).Out.Trim()
