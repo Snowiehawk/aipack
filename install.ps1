@@ -222,6 +222,10 @@ if (-not $NoPath) {
   Refresh-Path
 }
 
+$homeFile = Join-Path $InstallDir "aipack.home"
+[Environment]::SetEnvironmentVariable("AIPACK_HOME", $repoRoot, "User")
+$repoRoot | Set-Content -Encoding ASCII -Path $homeFile
+
 Write-Host ""
 Write-Host "Installed aipack to: $InstallDir"
 Write-Host "Try: aipack help"

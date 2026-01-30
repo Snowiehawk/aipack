@@ -7,8 +7,11 @@ $ErrorActionPreference = "Stop"
 
 $dstPs1 = Join-Path $InstallDir "aipack.ps1"
 $dstCmd = Join-Path $InstallDir "aipack.cmd"
+$homeFile = Join-Path $InstallDir "aipack.home"
 
-Remove-Item -Force -ErrorAction SilentlyContinue $dstPs1, $dstCmd
+Remove-Item -Force -ErrorAction SilentlyContinue $dstPs1, $dstCmd, $homeFile
+
+[Environment]::SetEnvironmentVariable("AIPACK_HOME", $null, "User")
 
 if (-not $KeepPath) {
   $userPath = [Environment]::GetEnvironmentVariable("Path","User")
