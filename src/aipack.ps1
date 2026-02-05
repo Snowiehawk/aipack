@@ -62,9 +62,9 @@ function Try-Cmd([string]$Exe, [string[]]$CmdArgs) {
   }
 }
 
-function Join-CmdArgs([string[]]$Args) {
-  if ($null -eq $Args -or $Args.Count -eq 0) { return "" }
-  $parts = foreach ($a in $Args) {
+function Join-CmdArgs([string[]]$ArgList) {
+  if ($null -eq $ArgList -or $ArgList.Count -eq 0) { return "" }
+  $parts = foreach ($a in $ArgList) {
     if ($null -eq $a) { continue }
     $s = [string]$a
     if ($s -eq "") { '""' }
@@ -77,8 +77,18 @@ function Join-CmdArgs([string[]]$Args) {
 function Try-CmdStdin([string]$Exe, [string[]]$CmdArgs, [string]$StdinText) {
   try {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $Exe
-    $psi.Arguments = (Join-CmdArgs $CmdArgs)
+    $isCmd = $false
+    if ($Exe) {
+      $ext = [System.IO.Path]::GetExtension($Exe)
+      if ($ext -and ($ext.ToLowerInvariant() -in @(".cmd",".bat"))) { $isCmd = $true }
+    }
+    if ($isCmd) {
+      $psi.FileName = "cmd.exe"
+      $psi.Arguments = "/c " + (Join-CmdArgs (@($Exe) + $CmdArgs))
+    } else {
+      $psi.FileName = $Exe
+      $psi.Arguments = (Join-CmdArgs $CmdArgs)
+    }
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
@@ -88,33 +98,15 @@ function Try-CmdStdin([string]$Exe, [string[]]$CmdArgs, [string]$StdinText) {
     $p = New-Object System.Diagnostics.Process
     $p.StartInfo = $psi
 
-    $outBuilder = New-Object System.Text.StringBuilder
-    $errBuilder = New-Object System.Text.StringBuilder
-
-    $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
-      param($sender,$e)
-      if ($e.Data -ne $null) { [void]$outBuilder.AppendLine($e.Data) }
-    }
-    $errorHandler = [System.Diagnostics.DataReceivedEventHandler]{
-      param($sender,$e)
-      if ($e.Data -ne $null) { [void]$errBuilder.AppendLine($e.Data) }
-    }
-
     $null = $p.Start()
-    $p.add_OutputDataReceived($outputHandler)
-    $p.add_ErrorDataReceived($errorHandler)
-    $p.BeginOutputReadLine()
-    $p.BeginErrorReadLine()
     if ($null -ne $StdinText) {
       $p.StandardInput.Write($StdinText)
     }
     $p.StandardInput.Close()
-    $p.WaitForExit()
-    $p.CancelOutputRead()
-    $p.CancelErrorRead()
 
-    $outText = $outBuilder.ToString()
-    $errText = $errBuilder.ToString()
+    $outText = $p.StandardOutput.ReadToEnd()
+    $errText = $p.StandardError.ReadToEnd()
+    $p.WaitForExit()
     $combined = $outText
     if (-not [string]::IsNullOrWhiteSpace($errText)) {
       if ($combined -and -not $combined.EndsWith("`n")) { $combined += "`n" }
@@ -124,6 +116,41 @@ function Try-CmdStdin([string]$Exe, [string[]]$CmdArgs, [string]$StdinText) {
   } catch {
     return [pscustomobject]@{ Out = ($_ | Out-String); Code = 1 }
   }
+}
+
+function Get-DirectoryStructureLinesFromXml([string]$XmlText) {
+  $lines = @()
+  if ([string]::IsNullOrWhiteSpace($XmlText)) { return $lines }
+  $dirMatch = [regex]::Match($XmlText, "<directory_structure>(.*?)</directory_structure>", [System.Text.RegularExpressions.RegexOptions]::Singleline)
+  if ($dirMatch.Success) {
+    $dirText = $dirMatch.Groups[1].Value
+    $dirText = $dirText -replace "`r`n","`n"
+    $dirText = $dirText -replace "`r","`n"
+    $lines = $dirText -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" }
+  }
+  return @($lines)
+}
+
+function Find-ZipEntryBySuffix($Zip, [string]$Suffix) {
+  if ($null -eq $Zip -or [string]::IsNullOrWhiteSpace($Suffix)) { return $null }
+  foreach ($e in $Zip.Entries) {
+    if ($e.FullName -ieq $Suffix) { return $e }
+    if ($e.FullName -like "*/$Suffix") { return $e }
+  }
+  return $null
+}
+
+function Read-ZipEntryText($Entry) {
+  if ($null -eq $Entry) { return $null }
+  $sr = New-Object System.IO.StreamReader($Entry.Open())
+  try { return $sr.ReadToEnd() } finally { $sr.Dispose() }
+}
+
+function Get-RepoPathFromRepoInfoText([string]$InfoText) {
+  if ([string]::IsNullOrWhiteSpace($InfoText)) { return "" }
+  $m = [regex]::Match($InfoText, "^packed from:\s*(.+)$", [System.Text.RegularExpressions.RegexOptions]::Multiline)
+  if ($m.Success) { return $m.Groups[1].Value.Trim() }
+  return ""
 }
 
 function Get-PowerShellExePath {
@@ -280,6 +307,7 @@ function Show-Help {
   Write-Host "  aipack help"
   Write-Host "  aipack list"
   Write-Host "  aipack doctor"
+  Write-Host "  aipack validate <outDirOrZip>"
   Write-Host ""
   Write-Host "Management notes:"
   Write-Host "  -Reinstall locates the source repo via AIPACK_HOME (User)"
@@ -295,7 +323,7 @@ function Show-Help {
   Write-Host "  -ZipOnly           Delete output folder after successful zip"
   Write-Host "  -Yes               Skip deletion prompt for -ZipOnly (still prints warning)"
   Write-Host "  -Zip               (deprecated) Create <outFolder>.zip next to the folder"
-  Write-Host "  -Staged            Also write patch.staged.diff"
+  Write-Host "  -Staged            Deprecated (patch.staged.diff is always written)"
   Write-Host "  -StrictTracked     Run repomix from git ls-files via --stdin (deterministic tracked-only pack)"
   Write-Host "  -PackUntracked     Additionally generate a repomix output for untracked files (see outputs)"
   Write-Host "  -NoRemote          Omit origin URL from REPO_INFO.md"
@@ -306,7 +334,9 @@ function Show-Help {
   Write-Host ""
   Write-Host "Outputs (inside the out folder):"
   Write-Host "  repomix-output.xml"
-  Write-Host "  patch.diff (plus patch.staged.diff if -Staged)"
+  Write-Host "  patch.unstaged.diff"
+  Write-Host "  patch.staged.diff"
+  Write-Host "  patch.diff (legacy alias of patch.unstaged.diff)"
   Write-Host "  REPO_INFO.md"
   Write-Host "  ASSET_MANIFEST.md"
   Write-Host "  AIPACK_NAV.md"
@@ -373,6 +403,127 @@ function Run-Doctor {
     git status -sb
   }
   Write-Host ""
+}
+
+function Run-Validate([string]$TargetPath) {
+  Write-Host ""
+  Write-Host "AIPACK validate"
+  if ([string]::IsNullOrWhiteSpace($TargetPath)) { throw "validate requires a path to an aipack output folder or zip." }
+  $target = $TargetPath.Trim('"')
+
+  $isDir = Test-Path -LiteralPath $target -PathType Container
+  $isFile = Test-Path -LiteralPath $target -PathType Leaf
+  if (-not $isDir -and -not $isFile) { throw "validate path not found: $target" }
+
+  $repomixText = ""
+  $repomixLabel = ""
+  $repoInfoText = ""
+  $missingFileText = $null
+  $paths = @{
+    included = "(missing)"
+    tracked = "(missing)"
+    missing = "(missing)"
+    untracked = "(missing)"
+  }
+
+  if ($isDir) {
+    $repomixPath = Join-Path $target "repomix-output.xml"
+    if (-not (Test-Path -LiteralPath $repomixPath)) { throw "repomix-output.xml not found in $target" }
+    $repomixText = Get-Content -Path $repomixPath -Raw -ErrorAction Stop
+    $repomixLabel = $repomixPath
+
+    $repoInfoPath = Join-Path $target "REPO_INFO.md"
+    if (Test-Path -LiteralPath $repoInfoPath) { $repoInfoText = Get-Content -Path $repoInfoPath -Raw -ErrorAction SilentlyContinue }
+
+    $includedPath = Join-Path $target "aipack_included.txt"
+    $trackedPath = Join-Path $target "git_tracked.txt"
+    $missingPath = Join-Path $target "aipack_missing_tracked.txt"
+    $untrackedPath = Join-Path $target "git_untracked.txt"
+
+    if (Test-Path -LiteralPath $includedPath) { $paths.included = $includedPath }
+    if (Test-Path -LiteralPath $trackedPath) { $paths.tracked = $trackedPath }
+    if (Test-Path -LiteralPath $missingPath) {
+      $paths.missing = $missingPath
+      $missingFileText = Get-Content -Path $missingPath -Raw -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $untrackedPath) { $paths.untracked = $untrackedPath }
+  } else {
+    try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue } catch { }
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($target)
+    try {
+      $repEntry = Find-ZipEntryBySuffix $zip "repomix-output.xml"
+      if (-not $repEntry) { throw "repomix-output.xml not found in $target" }
+      $repomixText = Read-ZipEntryText $repEntry
+      $repomixLabel = "$target!$($repEntry.FullName)"
+
+      $repoInfoEntry = Find-ZipEntryBySuffix $zip "REPO_INFO.md"
+      if ($repoInfoEntry) { $repoInfoText = Read-ZipEntryText $repoInfoEntry }
+
+      $includedEntry = Find-ZipEntryBySuffix $zip "aipack_included.txt"
+      $trackedEntry = Find-ZipEntryBySuffix $zip "git_tracked.txt"
+      $missingEntry = Find-ZipEntryBySuffix $zip "aipack_missing_tracked.txt"
+      $untrackedEntry = Find-ZipEntryBySuffix $zip "git_untracked.txt"
+
+      if ($includedEntry) { $paths.included = "$target!$($includedEntry.FullName)" }
+      if ($trackedEntry) { $paths.tracked = "$target!$($trackedEntry.FullName)" }
+      if ($missingEntry) {
+        $paths.missing = "$target!$($missingEntry.FullName)"
+        $missingFileText = Read-ZipEntryText $missingEntry
+      }
+      if ($untrackedEntry) { $paths.untracked = "$target!$($untrackedEntry.FullName)" }
+    } finally {
+      $zip.Dispose()
+    }
+  }
+
+  $includedLines = Get-DirectoryStructureLinesFromXml $repomixText
+  $includedCount = $includedLines.Count
+
+  $trackedCountLabel = "tracked_count: (skipped)"
+  $missingTrackedCountLabel = ""
+  $repoPath = Get-RepoPathFromRepoInfoText $repoInfoText
+  if (-not [string]::IsNullOrWhiteSpace($repoPath) -and (Test-Path -LiteralPath $repoPath)) {
+    $g = Try-Cmd "git" @("-C",$repoPath,"rev-parse","--is-inside-work-tree")
+    if ($g.Code -eq 0 -and $g.Out.Trim() -eq "true") {
+      $tcmd = Try-Cmd "git" @("-C",$repoPath,"ls-files")
+      if ($tcmd.Code -eq 0) {
+        $trackedLines = $tcmd.Out -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" }
+        $trackedLines = @($trackedLines | Sort-Object -Unique)
+        $trackedCountLabel = "tracked_count: $($trackedLines.Count)"
+
+        $includedLookup = @{}
+        foreach ($line in $includedLines) { $includedLookup[$line] = $true }
+        $missingLines = @()
+        foreach ($line in $trackedLines) {
+          if (-not $includedLookup.ContainsKey($line)) { $missingLines += $line }
+        }
+        $missingLines = @($missingLines | Sort-Object -Unique)
+        $missingTrackedCountLabel = "missing_tracked_count: $($missingLines.Count)"
+      }
+    }
+  }
+
+  Write-Host ("target: " + $target)
+  Write-Host ("repomix: " + $repomixLabel)
+  Write-Host ("included_count: " + $includedCount)
+  Write-Host $trackedCountLabel
+  if ($missingTrackedCountLabel) { Write-Host $missingTrackedCountLabel }
+  Write-Host ("aipack_included.txt: " + $paths.included)
+  Write-Host ("git_tracked.txt: " + $paths.tracked)
+  Write-Host ("aipack_missing_tracked.txt: " + $paths.missing)
+  Write-Host ("git_untracked.txt: " + $paths.untracked)
+
+  if ($null -ne $missingFileText) {
+    $missingFileLines = $missingFileText -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" }
+    $missingFileCount = $missingFileLines.Count
+    Write-Host ("aipack_missing_tracked_count: " + $missingFileCount)
+    if ($missingFileCount -gt 0) {
+      Write-Host "aipack_missing_tracked_first20:"
+      foreach ($line in ($missingFileLines | Select-Object -First 20)) {
+        Write-Host ("- " + $line)
+      }
+    }
+  }
 }
 
 if ($PSCmdlet.ParameterSetName -ne "Pack") {
@@ -458,6 +609,22 @@ if ($PSCmdlet.ParameterSetName -eq "Pack") {
     }
   }
   if ($showDoctor) { Run-Doctor; exit 0 }
+
+  $showValidate = $false
+  $validateTarget = ""
+  if ($Arg -eq "validate") {
+    $showValidate = $true
+    if ($RemainingArgs -and $RemainingArgs.Count -gt 0) { $validateTarget = $RemainingArgs[0] }
+  } elseif ([string]::IsNullOrWhiteSpace($Arg) -and $RemainingArgs) {
+    for ($i = 0; $i -lt $RemainingArgs.Count; $i++) {
+      if ($RemainingArgs[$i] -eq "validate") {
+        $showValidate = $true
+        if ($i + 1 -lt $RemainingArgs.Count) { $validateTarget = $RemainingArgs[$i + 1] }
+        break
+      }
+    }
+  }
+  if ($showValidate) { Run-Validate $validateTarget; exit 0 }
 }
 
 if ($Arg -and [string]::IsNullOrWhiteSpace($OutName)) { $OutName = $Arg }
@@ -599,22 +766,29 @@ try {
     $injectLines += "- Zip archive: $zipPath (disabled by -NoZip). Upload the zip to ChatGPT when available."
   }
   $injectLines += "- repomix-output.xml is the packed snapshot of this folder."
-  $injectLines += "- patch.diff (and optional patch.staged.diff) contain git diffs from this same snapshot."
+  $injectLines += "- patch.unstaged.diff contains unstaged changes; patch.staged.diff contains staged changes."
+  $injectLines += "- patch.diff exists only for legacy compatibility (same as patch.unstaged.diff)."
   $injectLines += "- See REPO_INFO.md for full environment and repo metadata."
   Write-Utf8NoBom $injectPath ($injectLines -join "`n")
 
-  $patchPath = Join-Path $outDir "patch.diff"
-  Write-Step "Writing patch.diff"
+  $patchUnstagedPath = Join-Path $outDir "patch.unstaged.diff"
+  $patchStagedPath = Join-Path $outDir "patch.staged.diff"
+  $patchLegacyPath = Join-Path $outDir "patch.diff"
+
+  Write-Step "Writing patch.unstaged.diff"
   $diff = Try-Cmd "git" @("diff","--no-color")
   if ($diff.Code -ne 0) { throw "git diff failed." }
-  Write-Utf8NoBom $patchPath $diff.Out
+  Write-Utf8NoBom $patchUnstagedPath $diff.Out
 
-  if ($Staged) {
-    Write-Step "Writing patch.staged.diff"
-    $stagedPath = Join-Path $outDir "patch.staged.diff"
-    $sdiff = Try-Cmd "git" @("diff","--cached","--no-color")
-    if ($sdiff.Code -eq 0) { Write-Utf8NoBom $stagedPath $sdiff.Out }
-  }
+  Write-Step "Writing patch.staged.diff"
+  $sdiff = Try-Cmd "git" @("diff","--staged","--no-color")
+  if ($sdiff.Code -ne 0) { throw "git diff --staged failed." }
+  Write-Utf8NoBom $patchStagedPath $sdiff.Out
+
+  Write-Step "Writing patch.diff (legacy)"
+  Write-Utf8NoBom $patchLegacyPath $diff.Out
+
+  $patchPath = $patchUnstagedPath
 
   if (-not [string]::IsNullOrWhiteSpace($OpenAPIUrl)) {
     $openApiPath = Join-Path $outDir "openapi.json"
@@ -673,13 +847,7 @@ try {
   if (Test-Path $repomixOut) {
     try {
       $repomixText = Get-Content -Path $repomixOut -Raw -ErrorAction Stop
-      $dirMatch = [regex]::Match($repomixText, "<directory_structure>(.*?)</directory_structure>", [System.Text.RegularExpressions.RegexOptions]::Singleline)
-      if ($dirMatch.Success) {
-        $dirText = $dirMatch.Groups[1].Value
-        $dirText = $dirText -replace "`r`n","`n"
-        $dirText = $dirText -replace "`r","`n"
-        $includedLines = $dirText -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" }
-      }
+      $includedLines = Get-DirectoryStructureLinesFromXml $repomixText
     } catch { }
   }
   $includedLines = @($includedLines | Sort-Object -Unique)
@@ -713,6 +881,53 @@ try {
   $includedCount = $includedLines.Count
   $missingTrackedCount = $missingLines.Count
   $untrackedCount = $untrackedLines.Count
+  $untrackedPackWritten = $false
+  $untrackedPackStatus = "untracked_pack: disabled"
+
+  if ($PackUntracked) {
+    $untrackedPackStatus = "untracked_pack: skipped"
+    $untrackedInput = @()
+    foreach ($line in $untrackedLines) {
+      $rel = $line.Trim()
+      if (-not $rel) { continue }
+      if ($rel -eq $OutName -or $rel.StartsWith("$OutName/") -or $rel.StartsWith("$OutName\")) { continue }
+      $full = Join-Path $workDir ($rel -replace '/','\')
+      if (Test-Path -LiteralPath $full) { $untrackedInput += $rel }
+    }
+    $untrackedInput = @($untrackedInput | Sort-Object -Unique)
+    if ($untrackedInput.Count -eq 0) {
+      $untrackedPackStatus = "untracked_pack: skipped (no untracked files)"
+    } else {
+      $untrackedPackPath = Join-Path $outDir "repomix-untracked.xml"
+      $untrackedPackErrorPath = Join-Path $outDir "repomix-untracked.error.txt"
+      Write-Step "Running repomix for untracked files"
+      $stdinText = ($untrackedInput -join "`n")
+      if (-not $stdinText.EndsWith("`n")) { $stdinText += "`n" }
+      $repArgsUntracked = New-Object System.Collections.Generic.List[string]
+      if ($Compress) { $repArgsUntracked.Add("--compress") | Out-Null }
+      $repArgsUntracked.Add("-o") | Out-Null
+      $repArgsUntracked.Add($untrackedPackPath) | Out-Null
+      $repArgsUntracked.Add("--instruction-file-path") | Out-Null
+      $repArgsUntracked.Add($injectPath) | Out-Null
+      $repArgsUntracked.Add("--ignore") | Out-Null
+      $repArgsUntracked.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
+      $rUntracked = Try-CmdStdin "npx.cmd" (@("--yes","repomix@latest","--stdin") + $repArgsUntracked.ToArray()) $stdinText
+      if ($rUntracked.Code -ne 0) {
+        $errLines = @()
+        $errLines += "repomix untracked pack failed"
+        $errLines += "exit_code: $($rUntracked.Code)"
+        if ($rUntracked.Out) {
+          $errLines += ""
+          $errLines += $rUntracked.Out.TrimEnd()
+        }
+        Write-Utf8NoBom $untrackedPackErrorPath ($errLines -join "`n")
+        $untrackedPackStatus = "untracked_pack: failed (see repomix-untracked.error.txt)"
+      } else {
+        $untrackedPackWritten = $true
+        $untrackedPackStatus = "untracked_pack: written"
+      }
+    }
+  }
 
   $assetLines = @()
   $assetLines += "# ASSET_MANIFEST"
@@ -780,8 +995,7 @@ try {
   } else {
     $navLines += "zip: $zipPath (disabled)"
   }
-  $navArtifacts = @("repomix-output.xml","patch.diff")
-  if ($Staged) { $navArtifacts += "patch.staged.diff" }
+  $navArtifacts = @("repomix-output.xml","patch.unstaged.diff","patch.staged.diff")
   $navArtifacts += "REPO_INFO.md"
   $navArtifacts += "ASSET_MANIFEST.md"
   $navArtifacts += "AIPACK_SUMMARY.txt"
@@ -790,6 +1004,7 @@ try {
   $navArtifacts += "git_tracked.txt"
   $navArtifacts += "aipack_missing_tracked.txt"
   $navArtifacts += "git_untracked.txt"
+  if ($untrackedPackWritten) { $navArtifacts += "repomix-untracked.xml" }
   $navLines += ("artifacts: " + ($navArtifacts -join ", "))
   if ($zipEnabled) {
     $navLines += "note: this pack is best consumed via the zip archive next to outDir."
@@ -812,8 +1027,7 @@ try {
     }
     foreach ($line in $porcLines) { $navLines += ("- " + $line) }
     if ($truncated) { $navLines += "- (truncated)" }
-    if ($Staged) { $navLines += "Details: patch.diff and patch.staged.diff." }
-    else { $navLines += "Details: patch.diff." }
+    $navLines += "Details: patch.unstaged.diff and patch.staged.diff."
   }
 
   $navLines += ""
@@ -938,10 +1152,17 @@ try {
   $sumBase += "nav: $navPath"
   $sumBase += "repomix: $repomixOut"
   $sumBase += "diff: $patchPath"
-  if ($Staged) { $sumBase += "staged diff: " + (Join-Path $outDir "patch.staged.diff") }
+  $sumBase += "staged diff: $patchStagedPath"
+  $unstagedBytes = 0
+  $stagedBytes = 0
+  try { $unstagedBytes = (Get-Item -LiteralPath $patchPath -ErrorAction Stop).Length } catch { }
+  try { $stagedBytes = (Get-Item -LiteralPath $patchStagedPath -ErrorAction Stop).Length } catch { }
+  $sumBase += "unstaged_diff_bytes: $unstagedBytes"
+  $sumBase += "staged_diff_bytes: $stagedBytes"
   $sumBase += "included_count: $includedCount"
   $sumBase += "missing_tracked_count: $missingTrackedCount"
   $sumBase += "untracked_count: $untrackedCount"
+  $sumBase += $untrackedPackStatus
   $sum = $sumBase + @("zip: $zipLabel","folder: $folderDisposition")
   $sumPath = Join-Path $outDir "AIPACK_SUMMARY.txt"
   Write-Step "Writing AIPACK_SUMMARY.txt"
