@@ -62,9 +62,9 @@ function Try-Cmd([string]$Exe, [string[]]$CmdArgs) {
   }
 }
 
-function Join-CmdArgs([string[]]$ArgList) {
-  if ($null -eq $ArgList -or $ArgList.Count -eq 0) { return "" }
-  $parts = foreach ($a in $ArgList) {
+function Join-CmdArgs([string[]]$CmdArgs) {
+  if ($null -eq $CmdArgs -or $CmdArgs.Count -eq 0) { return "" }
+  $parts = foreach ($a in $CmdArgs) {
     if ($null -eq $a) { continue }
     $s = [string]$a
     if ($s -eq "") { '""' }
@@ -74,22 +74,31 @@ function Join-CmdArgs([string[]]$ArgList) {
   return ($parts -join ' ')
 }
 
-function Try-CmdStdin([string]$Exe, [string[]]$CmdArgs, [string]$StdinText) {
+function Try-CmdStdin([string]$Exe, [string[]]$CmdArgs, [string]$StdinText, [string]$Activity = "", [string]$WatchFile = "", [int]$TickMs = 1000, [int]$TotalItems = 0, [string]$WatchToken = "") {
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
   try {
+    $exePath = $Exe
+    try {
+      $cmdInfo = Get-Command $Exe -ErrorAction SilentlyContinue
+      if ($cmdInfo -and -not [string]::IsNullOrWhiteSpace($cmdInfo.Path)) { $exePath = $cmdInfo.Path }
+    } catch { }
+    $useStdin = ($null -ne $StdinText)
+
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $isCmd = $false
-    if ($Exe) {
-      $ext = [System.IO.Path]::GetExtension($Exe)
+    if ($exePath) {
+      $ext = [System.IO.Path]::GetExtension($exePath)
       if ($ext -and ($ext.ToLowerInvariant() -in @(".cmd",".bat"))) { $isCmd = $true }
     }
     if ($isCmd) {
       $psi.FileName = "cmd.exe"
-      $psi.Arguments = "/c " + (Join-CmdArgs (@($Exe) + $CmdArgs))
+      $psi.Arguments = "/c " + (Join-CmdArgs (@($exePath) + $CmdArgs))
     } else {
-      $psi.FileName = $Exe
+      $psi.FileName = $exePath
       $psi.Arguments = (Join-CmdArgs $CmdArgs)
     }
-    $psi.RedirectStandardInput = $true
+    $psi.WorkingDirectory = (Get-Location).Path
+    $psi.RedirectStandardInput = $useStdin
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
@@ -99,22 +108,111 @@ function Try-CmdStdin([string]$Exe, [string[]]$CmdArgs, [string]$StdinText) {
     $p.StartInfo = $psi
 
     $null = $p.Start()
-    if ($null -ne $StdinText) {
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $errTask = $p.StandardError.ReadToEndAsync()
+    if ($useStdin) {
       $p.StandardInput.Write($StdinText)
+      $p.StandardInput.Close()
     }
-    $p.StandardInput.Close()
-
-    $outText = $p.StandardOutput.ReadToEnd()
-    $errText = $p.StandardError.ReadToEnd()
+    $watchOffset = 0L
+    $watchRemainder = ""
+    $watchCount = 0
+    $useTokenProgress = ($TotalItems -gt 0) -and (-not [string]::IsNullOrEmpty($WatchToken))
+    $watchTokenLen = if ($useTokenProgress) { $WatchToken.Length } else { 0 }
+    while (-not $p.WaitForExit($TickMs)) {
+      if (-not [string]::IsNullOrWhiteSpace($Activity)) {
+        $status = ("elapsed: " + (Format-Duration $sw.Elapsed))
+        if ($useTokenProgress) {
+          if ((-not [string]::IsNullOrWhiteSpace($WatchFile)) -and (Test-Path -LiteralPath $WatchFile)) {
+            try {
+              $fs = [System.IO.File]::Open($WatchFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+              try {
+                $watchLen = $fs.Length
+                if ($watchLen -lt $watchOffset) {
+                  $watchOffset = 0L
+                  $watchRemainder = ""
+                  $watchCount = 0
+                }
+                if ($watchLen -gt $watchOffset) {
+                  $bytesToRead = $watchLen - $watchOffset
+                  $null = $fs.Seek($watchOffset, [System.IO.SeekOrigin]::Begin)
+                  $chunkSize = 65536
+                  $newBytes = New-Object byte[] $chunkSize
+                  $bytesRemaining = $bytesToRead
+                  $newTextBuilder = New-Object System.Text.StringBuilder
+                  $totalRead = 0
+                  while ($bytesRemaining -gt 0) {
+                    $toRead = [int][Math]::Min($chunkSize, $bytesRemaining)
+                    $read = $fs.Read($newBytes, 0, $toRead)
+                    if ($read -le 0) { break }
+                    [void]$newTextBuilder.Append([System.Text.Encoding]::UTF8.GetString($newBytes, 0, $read))
+                    $totalRead += $read
+                    $bytesRemaining -= $read
+                  }
+                  if ($totalRead -gt 0) {
+                    $newText = $newTextBuilder.ToString()
+                    $combinedWatch = $watchRemainder + $newText
+                    $searchAt = 0
+                    while ($searchAt -ge 0 -and $searchAt -lt $combinedWatch.Length) {
+                      $hit = $combinedWatch.IndexOf($WatchToken, $searchAt, [System.StringComparison]::Ordinal)
+                      if ($hit -lt 0) { break }
+                      $watchCount++
+                      $searchAt = $hit + $watchTokenLen
+                    }
+                    if ($watchTokenLen -gt 1) {
+                      $tailLen = [Math]::Min(($watchTokenLen - 1), $combinedWatch.Length)
+                      if ($tailLen -gt 0) {
+                        $watchRemainder = $combinedWatch.Substring($combinedWatch.Length - $tailLen, $tailLen)
+                      } else {
+                        $watchRemainder = ""
+                      }
+                    } else {
+                      $watchRemainder = ""
+                    }
+                    $watchOffset += $totalRead
+                  }
+                }
+              } finally {
+                if ($null -ne $fs) { $fs.Dispose() }
+              }
+            } catch { }
+          }
+          $pct = [int][Math]::Floor(($watchCount / [double]$TotalItems) * 100)
+          if ($pct -lt 0) { $pct = 0 }
+          if ($pct -gt 99) { $pct = 99 }
+          $status = ("elapsed: " + (Format-Duration $sw.Elapsed) + " | files: " + $watchCount + "/" + $TotalItems + " (" + $pct + "%)")
+          try { Write-Progress -Id 1 -Activity $Activity -Status $status -PercentComplete $pct } catch { }
+        } else {
+          try { Write-Progress -Id 1 -Activity $Activity -Status $status } catch { }
+        }
+      }
+    }
     $p.WaitForExit()
+    if (-not [string]::IsNullOrWhiteSpace($Activity)) {
+      try { Write-Progress -Id 1 -Activity $Activity -Completed } catch { }
+    }
+    try { $p.CancelOutputRead() } catch { }
+    try { $p.CancelErrorRead() } catch { }
+
+    try { $outTask.Wait() } catch { }
+    try { $errTask.Wait() } catch { }
+    $outText = ""
+    $errText = ""
+    try { $outText = $outTask.Result } catch { }
+    try { $errText = $errTask.Result } catch { }
     $combined = $outText
     if (-not [string]::IsNullOrWhiteSpace($errText)) {
       if ($combined -and -not $combined.EndsWith("`n")) { $combined += "`n" }
       $combined += $errText
     }
-    return [pscustomobject]@{ Out = $combined; Code = $p.ExitCode }
+    $sw.Stop()
+    return [pscustomobject]@{ Out = $combined; Code = $p.ExitCode; Elapsed = $sw.Elapsed }
   } catch {
-    return [pscustomobject]@{ Out = ($_ | Out-String); Code = 1 }
+    if (-not [string]::IsNullOrWhiteSpace($Activity)) {
+      try { Write-Progress -Id 1 -Activity $Activity -Completed } catch { }
+    }
+    $sw.Stop()
+    return [pscustomobject]@{ Out = ($_ | Out-String); Code = 1; Elapsed = $sw.Elapsed }
   }
 }
 
@@ -249,6 +347,11 @@ function Invoke-AipackScript([string]$ScriptPath, [string[]]$ScriptArgs) {
 function Write-Step([string]$Message) {
   $ts = (Get-Date).ToString("HH:mm:ss")
   Write-Host ("[$ts] " + $Message)
+}
+
+function Format-Duration([TimeSpan]$ts) {
+  $totalHours = [int][Math]::Floor($ts.TotalHours)
+  return ("{0:D2}:{1:D2}:{2:D2}" -f $totalHours, $ts.Minutes, $ts.Seconds)
 }
 
 function New-AipackZip([string]$OutDir, [string]$ZipPath, [switch]$Force) {
@@ -648,6 +751,7 @@ if ($ZipOnly -and $NoZip) { throw "-ZipOnly cannot be used with -NoZip." }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Missing git in PATH." }
 if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing npx.cmd in PATH." }
 
+$runSw = [System.Diagnostics.Stopwatch]::StartNew()
 Push-Location $workDir
 try {
   Write-Step "aipack v$AIPACK_VERSION starting"
@@ -830,17 +934,36 @@ try {
   $repArgs.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
 
   Write-Step "Running repomix (this can take a while)"
+  $repBase = @("--yes","repomix@latest")
+  if ($VerbosePreference -eq "Continue") { $repBase += "--verbose" }
+  $repWatchToken = '<file path='
+  $totalFilesExpected = 0
   if ($StrictTracked) {
     Write-Step "Collecting tracked files for strict pack"
     $trackedCmd = Try-Cmd "git" @("ls-files")
     if ($trackedCmd.Code -ne 0) { throw "git ls-files failed.`n$trackedCmd" }
     $trackedText = $trackedCmd.Out
     if ([string]::IsNullOrWhiteSpace($trackedText)) { throw "git ls-files returned no files." }
-    $r = Try-CmdStdin "npx.cmd" (@("--yes","repomix@latest","--stdin") + $repArgs.ToArray()) $trackedText
+    $trackedProgressLines = @($trackedText -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" })
+    $totalFilesExpected = $trackedProgressLines.Count
+    $r = Try-CmdStdin "npx.cmd" ($repBase + @("--stdin") + $repArgs.ToArray()) $trackedText -Activity "repomix" -WatchFile $repomixOut -TickMs 1000 -TotalItems $totalFilesExpected -WatchToken $repWatchToken
   } else {
-    $r = Try-Cmd "npx.cmd" (@("--yes","repomix@latest") + $repArgs.ToArray())
+    $combinedPaths = @()
+    $trackedForProgressCmd = Try-Cmd "git" @("ls-files")
+    if ($trackedForProgressCmd.Code -eq 0 -and -not [string]::IsNullOrWhiteSpace($trackedForProgressCmd.Out)) {
+      $combinedPaths += @($trackedForProgressCmd.Out -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" })
+    }
+    $untrackedForProgressCmd = Try-Cmd "git" @("ls-files","-o","--exclude-standard")
+    if ($untrackedForProgressCmd.Code -eq 0 -and -not [string]::IsNullOrWhiteSpace($untrackedForProgressCmd.Out)) {
+      $combinedPaths += @($untrackedForProgressCmd.Out -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" })
+    }
+    $combinedPaths = @($combinedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $totalFilesExpected = $combinedPaths.Count
+    $r = Try-CmdStdin "npx.cmd" ($repBase + $repArgs.ToArray()) $null -Activity "repomix" -WatchFile $repomixOut -TickMs 1000 -TotalItems $totalFilesExpected -WatchToken $repWatchToken
   }
   if ($r.Code -ne 0) { throw "repomix failed.`n$r" }
+  $repomixElapsedStr = Format-Duration $r.Elapsed
+  Write-Step ("repomix finished in " + $repomixElapsedStr)
 
   Write-Step "Generating audit files"
   $includedLines = @()
@@ -1145,6 +1268,7 @@ try {
 
   $folderDisposition = $(if ($ZipOnly -and $deleteConfirmed) { "deleted" } else { "retained" })
   $zipLabel = $(if ($zipEnabled) { $zipPath } else { "$zipPath (disabled)" })
+  $elapsedPackStr = Format-Duration $runSw.Elapsed
 
   $sumBase = @()
   $sumBase += "AIPACK complete"
@@ -1159,10 +1283,12 @@ try {
   try { $stagedBytes = (Get-Item -LiteralPath $patchStagedPath -ErrorAction Stop).Length } catch { }
   $sumBase += "unstaged_diff_bytes: $unstagedBytes"
   $sumBase += "staged_diff_bytes: $stagedBytes"
+  $sumBase += "repomix_elapsed: $repomixElapsedStr"
   $sumBase += "included_count: $includedCount"
   $sumBase += "missing_tracked_count: $missingTrackedCount"
   $sumBase += "untracked_count: $untrackedCount"
   $sumBase += $untrackedPackStatus
+  $sumBase += "elapsed_pack: $elapsedPackStr"
   $sum = $sumBase + @("zip: $zipLabel","folder: $folderDisposition")
   $sumPath = Join-Path $outDir "AIPACK_SUMMARY.txt"
   Write-Step "Writing AIPACK_SUMMARY.txt"
@@ -1194,6 +1320,10 @@ try {
   } elseif (-not ($ZipOnly -and $deleteConfirmed)) {
     Write-Host "Wrote $outDir"
   }
+
+  $runSw.Stop()
+  $elapsedTotalStr = Format-Duration $runSw.Elapsed
+  Write-Host ("Finished in " + $elapsedTotalStr)
 
 } finally {
   Pop-Location
