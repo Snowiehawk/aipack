@@ -12,6 +12,8 @@ Set-StrictMode -Version Latest
 $repoRoot = $PSScriptRoot
 $src = Join-Path $repoRoot "src\aipack.ps1"
 if (-not (Test-Path $src)) { throw "Missing $src. Run install.ps1 from a cloned aipack repo." }
+$AIPACK_REPOMIX_DEFAULT_SPEC = "repomix@1.9.0"
+$repomixSpec = $(if ([string]::IsNullOrWhiteSpace($env:AIPACK_REPOMIX_SPEC)) { $AIPACK_REPOMIX_DEFAULT_SPEC } else { $env:AIPACK_REPOMIX_SPEC.Trim() })
 
 function Is-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -184,10 +186,11 @@ function Warmup-Repomix {
   if ($NoWarmup) { return }
   if (-not (Cmd-Exists "npx.cmd")) { return }
   Write-Host "Warming up repomix (downloads once via npx, cached afterwards)"
+  Write-Host ("repomix package spec: " + $repomixSpec)
   try {
-    & npx.cmd --yes repomix@latest --version | Out-Host
+    & npx.cmd --yes $repomixSpec --version | Out-Host
   } catch {
-    try { & npx.cmd repomix@latest --version | Out-Host } catch { }
+    try { & npx.cmd $repomixSpec --version | Out-Host } catch { }
   }
 }
 

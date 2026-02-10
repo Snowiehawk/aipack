@@ -30,6 +30,13 @@ param(
   [switch]$Compress,
   [Parameter(ParameterSetName="Pack")]
   [string]$ExtraIgnore = "",
+  [Parameter(ParameterSetName="Pack")]
+  [switch]$FromCwd,
+  [Parameter(ParameterSetName="Pack")]
+  [ValidateRange(0,100)]
+  [int]$MinTrackedCoveragePct = 85,
+  [Parameter(ParameterSetName="Pack")]
+  [switch]$NoCoverageGate,
   [Parameter(ParameterSetName="Install", Mandatory=$true)]
   [switch]$Install,
   [Parameter(ParameterSetName="Reinstall", Mandatory=$true)]
@@ -40,7 +47,16 @@ param(
   [string[]]$RemainingArgs
 )
 
-$AIPACK_VERSION = "0.3.2"
+$AIPACK_VERSION = "0.3.3"
+$AIPACK_REPOMIX_DEFAULT_SPEC = "repomix@1.9.0"
+
+function Get-RepomixSpec {
+  $override = $env:AIPACK_REPOMIX_SPEC
+  if ([string]::IsNullOrWhiteSpace($override)) { return $AIPACK_REPOMIX_DEFAULT_SPEC }
+  return $override.Trim()
+}
+
+$RepomixSpec = Get-RepomixSpec
 
 function Write-Utf8NoBom([string]$Path, [string]$Content) {
   $enc = New-Object System.Text.UTF8Encoding($false)
@@ -229,6 +245,26 @@ function Get-DirectoryStructureLinesFromXml([string]$XmlText) {
   return @($lines)
 }
 
+function Get-RepomixFilePathsFromXml([string]$XmlText) {
+  $lines = @()
+  if ([string]::IsNullOrWhiteSpace($XmlText)) { return @($lines) }
+  $matches = [regex]::Matches($XmlText, '(?m)^\s*<file path="([^"]+)">')
+  foreach ($m in $matches) {
+    $raw = $m.Groups[1].Value.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+      $decoded = [System.Net.WebUtility]::HtmlDecode($raw)
+      if (-not [string]::IsNullOrWhiteSpace($decoded)) { $lines += $decoded }
+    }
+  }
+  return @($lines)
+}
+
+function Get-IncludedLinesFromRepomixXml([string]$XmlText) {
+  $paths = Get-RepomixFilePathsFromXml $XmlText
+  if ($paths.Count -gt 0) { return @($paths) }
+  return @(Get-DirectoryStructureLinesFromXml $XmlText)
+}
+
 function Find-ZipEntryBySuffix($Zip, [string]$Suffix) {
   if ($null -eq $Zip -or [string]::IsNullOrWhiteSpace($Suffix)) { return $null }
   foreach ($e in $Zip.Entries) {
@@ -397,12 +433,86 @@ function RelPathUnix([string]$Base, [string]$Full) {
   return ($rel -replace '\\','/')
 }
 
+function Normalize-FullPath([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+  try { return ([System.IO.Path]::GetFullPath($Path)).TrimEnd('\','/') } catch { return $Path.TrimEnd('\','/') }
+}
+
+function Try-GetRelPathUnix([string]$Base, [string]$Full) {
+  if ([string]::IsNullOrWhiteSpace($Base) -or [string]::IsNullOrWhiteSpace($Full)) { return "" }
+  $baseNorm = Normalize-FullPath $Base
+  $fullNorm = Normalize-FullPath $Full
+  $cmp = [System.StringComparison]::OrdinalIgnoreCase
+  if ($fullNorm.Equals($baseNorm, $cmp)) { return "" }
+  $baseSlash = $baseNorm + [System.IO.Path]::DirectorySeparatorChar
+  $baseAltSlash = $baseNorm + [System.IO.Path]::AltDirectorySeparatorChar
+  if ((-not $fullNorm.StartsWith($baseSlash, $cmp)) -and (-not $fullNorm.StartsWith($baseAltSlash, $cmp))) { return "" }
+  return RelPathUnix $baseNorm $fullNorm
+}
+
+function Test-RepomixStdinNestedPathSupport([string[]]$TrackedLines) {
+  $result = [ordered]@{
+    Supported = $false
+    Reason = "probe_not_run"
+    NestedPath = ""
+    RootPath = ""
+    ProbeFileCount = 0
+    ProbeExitCode = -1
+  }
+  $tracked = @($TrackedLines | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" })
+  if ($tracked.Count -eq 0) {
+    $result.Reason = "no tracked files"
+    return [pscustomobject]$result
+  }
+  $nested = $tracked | Where-Object { $_ -match '[\\/]' } | Select-Object -First 1
+  if (-not $nested) {
+    $result.Supported = $true
+    $result.Reason = "no nested tracked files in scope"
+    return [pscustomobject]$result
+  }
+  $root = $tracked | Where-Object { $_ -notmatch '[\\/]' } | Select-Object -First 1
+  if (-not $root) { $root = $nested }
+
+  $result.NestedPath = $nested
+  $result.RootPath = $root
+
+  $stdinText = $root + "`n" + $nested + "`n"
+  $args = @("--yes",$RepomixSpec,"--stdin","--stdout","--style","xml","--no-file-summary","--no-directory-structure")
+  $probe = Try-CmdStdin "npx.cmd" $args $stdinText
+  $result.ProbeExitCode = $probe.Code
+  if ($probe.Code -ne 0) {
+    $result.Reason = "probe command failed (exit $($probe.Code))"
+    return [pscustomobject]$result
+  }
+
+  $probePaths = Get-RepomixFilePathsFromXml $probe.Out
+  $result.ProbeFileCount = $probePaths.Count
+  $hasNested = $false
+  $hasRoot = $false
+  foreach ($p in $probePaths) {
+    if ($p -eq $nested) { $hasNested = $true }
+    if ($p -eq $root) { $hasRoot = $true }
+  }
+
+  if ($hasNested) {
+    $result.Supported = $true
+    $result.Reason = "nested path accepted"
+    return [pscustomobject]$result
+  }
+  if ($hasRoot) {
+    $result.Reason = "nested path dropped while root path accepted"
+    return [pscustomobject]$result
+  }
+  $result.Reason = "stdin probe returned no expected file paths"
+  return [pscustomobject]$result
+}
+
 function Show-Help {
   Write-Host ""
   Write-Host "aipack v$AIPACK_VERSION"
   Write-Host ""
   Write-Host "Usage:"
-  Write-Host "  aipack                     (pack current repo)"
+  Write-Host "  aipack                     (pack git repo root by default)"
   Write-Host "  aipack <outFolderName>"
   Write-Host "  aipack -Install"
   Write-Host "  aipack -Reinstall"
@@ -427,13 +537,19 @@ function Show-Help {
   Write-Host "  -Yes               Skip deletion prompt for -ZipOnly (still prints warning)"
   Write-Host "  -Zip               (deprecated) Create <outFolder>.zip next to the folder"
   Write-Host "  -Staged            Deprecated (patch.staged.diff is always written)"
-  Write-Host "  -StrictTracked     Run repomix from git ls-files via --stdin (deterministic tracked-only pack)"
+  Write-Host "  -FromCwd           Pack only current directory scope (legacy behavior)"
+  Write-Host "  -StrictTracked     Try strict tracked-only stdin mode; auto-falls back when stdin is unreliable"
   Write-Host "  -PackUntracked     Additionally generate a repomix output for untracked files (see outputs)"
+  Write-Host "  -MinTrackedCoveragePct <0-100>  Fail if tracked coverage is below threshold (default: 85)"
+  Write-Host "  -NoCoverageGate    Disable tracked coverage fail-fast gate"
   Write-Host "  -NoRemote          Omit origin URL from REPO_INFO.md"
   Write-Host "  -Lean              Ignore common noisy outputs (preflight/mutations txt)"
   Write-Host "  -Compress          Pass --compress to repomix"
   Write-Host "  -OpenAPIUrl <url>  Fetch openapi.json (ex: http://127.0.0.1:8000/openapi.json)"
   Write-Host "  -ExtraIgnore <csv> Extra repomix ignore patterns, comma separated"
+  Write-Host ""
+  Write-Host "Env overrides:"
+  Write-Host "  AIPACK_REPOMIX_SPEC  Override repomix package spec (default: $AIPACK_REPOMIX_DEFAULT_SPEC)"
   Write-Host ""
   Write-Host "Outputs (inside the out folder):"
   Write-Host "  repomix-output.xml"
@@ -497,7 +613,8 @@ function Run-Doctor {
   Write-Host "git version:"; git --version
   Write-Host "node version:"; node -v
   Write-Host "npm version:"; npm -v
-  Write-Host "repomix version:"; npx.cmd --yes repomix@latest --version
+  Write-Host ("repomix package spec: " + $RepomixSpec)
+  Write-Host "repomix version:"; npx.cmd --yes $RepomixSpec --version
   Write-Host ""
   $g = Try-Cmd "git" @("rev-parse","--is-inside-work-tree")
   Write-Host ("git repo: " + ($(if ($g.Code -eq 0) {"yes"} else {"no"})))
@@ -579,11 +696,14 @@ function Run-Validate([string]$TargetPath) {
     }
   }
 
-  $includedLines = Get-DirectoryStructureLinesFromXml $repomixText
+  $includedLines = Get-IncludedLinesFromRepomixXml $repomixText
+  $includedLines = @($includedLines | Sort-Object -Unique)
   $includedCount = $includedLines.Count
 
   $trackedCountLabel = "tracked_count: (skipped)"
   $missingTrackedCountLabel = ""
+  $includedTrackedCountLabel = ""
+  $trackedCoverageLabel = ""
   $repoPath = Get-RepoPathFromRepoInfoText $repoInfoText
   if (-not [string]::IsNullOrWhiteSpace($repoPath) -and (Test-Path -LiteralPath $repoPath)) {
     $g = Try-Cmd "git" @("-C",$repoPath,"rev-parse","--is-inside-work-tree")
@@ -602,6 +722,15 @@ function Run-Validate([string]$TargetPath) {
         }
         $missingLines = @($missingLines | Sort-Object -Unique)
         $missingTrackedCountLabel = "missing_tracked_count: $($missingLines.Count)"
+        $includedTrackedCount = $trackedLines.Count - $missingLines.Count
+        if ($includedTrackedCount -lt 0) { $includedTrackedCount = 0 }
+        $trackedCoverage = 100.0
+        if ($trackedLines.Count -gt 0) {
+          $trackedCoverage = [Math]::Round(($includedTrackedCount / [double]$trackedLines.Count) * 100.0, 2)
+        }
+        $trackedCoverageStr = [string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0:0.00}", $trackedCoverage)
+        $includedTrackedCountLabel = "included_tracked_count: $includedTrackedCount"
+        $trackedCoverageLabel = "tracked_coverage_pct: $trackedCoverageStr"
       }
     }
   }
@@ -610,7 +739,9 @@ function Run-Validate([string]$TargetPath) {
   Write-Host ("repomix: " + $repomixLabel)
   Write-Host ("included_count: " + $includedCount)
   Write-Host $trackedCountLabel
+  if ($includedTrackedCountLabel) { Write-Host $includedTrackedCountLabel }
   if ($missingTrackedCountLabel) { Write-Host $missingTrackedCountLabel }
+  if ($trackedCoverageLabel) { Write-Host $trackedCoverageLabel }
   Write-Host ("aipack_included.txt: " + $paths.included)
   Write-Host ("git_tracked.txt: " + $paths.tracked)
   Write-Host ("aipack_missing_tracked.txt: " + $paths.missing)
@@ -733,8 +864,20 @@ if ($PSCmdlet.ParameterSetName -eq "Pack") {
 if ($Arg -and [string]::IsNullOrWhiteSpace($OutName)) { $OutName = $Arg }
 
 $invocationDir = (Get-Location).Path
-$workDir = $invocationDir
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Missing git in PATH." }
+if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing npx.cmd in PATH." }
 
+if ($FromCwd) {
+  $workDir = $invocationDir
+} else {
+  $rootCmd = Try-Cmd "git" @("rev-parse","--show-toplevel")
+  if ($rootCmd.Code -ne 0 -or [string]::IsNullOrWhiteSpace($rootCmd.Out)) {
+    throw "Could not resolve git repo root from: $invocationDir. Run inside a git repo or use -FromCwd."
+  }
+  $workDir = $rootCmd.Out.Trim()
+}
+
+$scopeMode = $(if ($FromCwd) { "cwd" } else { "git-root" })
 if ([string]::IsNullOrWhiteSpace($RepoName)) { $RepoName = (Split-Path $workDir -Leaf) }
 
 $tsUtc = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
@@ -748,14 +891,13 @@ $zipPath = "$outDir.zip"
 $zipEnabled = -not $NoZip
 if ($ZipOnly -and $NoZip) { throw "-ZipOnly cannot be used with -NoZip." }
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Missing git in PATH." }
-if (-not (Get-Command npx.cmd -ErrorAction SilentlyContinue)) { throw "Missing npx.cmd in PATH." }
-
 $runSw = [System.Diagnostics.Stopwatch]::StartNew()
 Push-Location $workDir
 try {
   Write-Step "aipack v$AIPACK_VERSION starting"
   Write-Step "Working dir: $workDir"
+  Write-Step "Invocation dir: $invocationDir"
+  Write-Step "Pack scope mode: $scopeMode"
   Write-Step "Output dir: $outDir"
   Write-Step "Checking git repository"
   $inside = (Try-Cmd "git" @("rev-parse","--is-inside-work-tree")).Out.Trim()
@@ -783,19 +925,39 @@ try {
   $pyVer = ""
   if (Get-Command python -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "python" @("--version")).Out.Trim() }
   elseif (Get-Command py -ErrorAction SilentlyContinue) { $pyVer = (Try-Cmd "py" @("-V")).Out.Trim() }
-  $repomixVer = (Try-Cmd "npx.cmd" @("--yes","repomix@latest","--version")).Out.Trim()
+  $repomixVer = (Try-Cmd "npx.cmd" @("--yes",$RepomixSpec,"--version")).Out.Trim()
 
   $startup = Join-Path $workDir "docs\STARTUP.md"
   $readme = Join-Path $workDir "README.md"
 
-  $tracked = (Try-Cmd "git" @("ls-files")).Out -split "`n"
+  $trackedCmdMeta = Try-Cmd "git" @("ls-files")
+  if ($trackedCmdMeta.Code -ne 0) { throw "git ls-files failed.`n$trackedCmdMeta" }
+  $trackedLinesForScope = @($trackedCmdMeta.Out -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" } | Sort-Object -Unique)
   $lockNeedles = @("package-lock.json","pnpm-lock.yaml","yarn.lock","bun.lockb","poetry.lock","Pipfile.lock","requirements.lock","requirements.txt")
   $lockHits = @()
   foreach ($n in $lockNeedles) {
-    $m = $tracked | Where-Object { $_.Trim().ToLower().EndsWith($n.ToLower()) }
+    $m = $trackedLinesForScope | Where-Object { $_.Trim().ToLower().EndsWith($n.ToLower()) }
     if ($m) { $lockHits += $m }
   }
   $lockHits = $lockHits | Sort-Object -Unique
+
+  $strictModeStatus = "not-requested"
+  $strictModeDetail = ""
+  $strictUseStdin = $false
+  if ($StrictTracked) {
+    Write-Step "Probing repomix --stdin nested path support"
+    $strictProbe = Test-RepomixStdinNestedPathSupport $trackedLinesForScope
+    if ($strictProbe.Supported) {
+      $strictModeStatus = "strict-stdin"
+      $strictModeDetail = $strictProbe.Reason
+      $strictUseStdin = $true
+    } else {
+      $strictModeStatus = "fallback-nonstdin"
+      $strictModeDetail = $strictProbe.Reason
+      if ($strictProbe.NestedPath) { $strictModeDetail += ("; nested_probe=" + $strictProbe.NestedPath) }
+      Write-Host ("WARNING: -StrictTracked requested but stdin probe failed (" + $strictProbe.Reason + "). Falling back to non-stdin scan.")
+    }
+  }
 
   $expected = @("LICENSE","LICENSE.md","LICENSE.txt","CHANGELOG.md","RELEASE_NOTES.md","CODE_OF_CONDUCT.md",".github/CODEOWNERS")
   $expectedStatus = foreach ($p in $expected) {
@@ -809,6 +971,8 @@ try {
   $repoInfoLines += "repo name: $RepoName"
   $repoInfoLines += "snapshot timestamp (UTC): $tsUtc"
   $repoInfoLines += "packed from: $workDir"
+  $repoInfoLines += "invoked from: $invocationDir"
+  $repoInfoLines += "scope mode: $scopeMode"
   $repoInfoLines += "aipack version: $AIPACK_VERSION"
   $repoInfoLines += "repomix: $repomixVer"
   if ($pyVer) { $repoInfoLines += "python: $pyVer" }
@@ -819,6 +983,13 @@ try {
   $repoInfoLines += "git branch: $branch"
   $repoInfoLines += "git commit: $sha"
   $repoInfoLines += ("working tree dirty: " + ($(if ($dirty) {"yes"} else {"no"})))
+  $repoInfoLines += ("strict tracked requested: " + ($(if ($StrictTracked) {"yes"} else {"no"})))
+  $repoInfoLines += ("strict mode status: " + $strictModeStatus)
+  if (-not [string]::IsNullOrWhiteSpace($strictModeDetail)) {
+    $repoInfoLines += ("strict mode detail: " + $strictModeDetail)
+  }
+  $repoInfoLines += ("coverage gate: " + ($(if ($NoCoverageGate) {"disabled"} else {"enabled"})))
+  $repoInfoLines += ("coverage threshold pct: " + $MinTrackedCoveragePct)
   if (-not $NoRemote) {
     $repoInfoLines += ("origin url: " + ($(if ($origin) {$origin} else {"(none)"})))
   } else {
@@ -908,9 +1079,13 @@ try {
   $repomixOut = Join-Path $outDir "repomix-output.xml"
 
   $ignore = New-Object System.Collections.Generic.List[string]
+  $outRelFromWork = Try-GetRelPathUnix $workDir $outDir
+  if (-not [string]::IsNullOrWhiteSpace($outRelFromWork)) { $ignore.Add("$outRelFromWork/**") | Out-Null }
   $ignore.Add("$OutName/**") | Out-Null
   $ignore.Add("_aipack_*/**") | Out-Null
+  $ignore.Add("**/_aipack_*/**") | Out-Null
   $ignore.Add("_ai_pack_*/**") | Out-Null
+  $ignore.Add("**/_ai_pack_*/**") | Out-Null
   if ($Lean) {
     $ignore.Add("preflight_output*.txt") | Out-Null
     $ignore.Add("**/preflight_output*.txt") | Out-Null
@@ -934,20 +1109,22 @@ try {
   $repArgs.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
 
   Write-Step "Running repomix (this can take a while)"
-  $repBase = @("--yes","repomix@latest")
+  $repBase = @("--yes",$RepomixSpec)
   if ($VerbosePreference -eq "Continue") { $repBase += "--verbose" }
   $repWatchToken = '<file path='
   $totalFilesExpected = 0
-  if ($StrictTracked) {
+  if ($strictUseStdin) {
     Write-Step "Collecting tracked files for strict pack"
-    $trackedCmd = Try-Cmd "git" @("ls-files")
-    if ($trackedCmd.Code -ne 0) { throw "git ls-files failed.`n$trackedCmd" }
-    $trackedText = $trackedCmd.Out
-    if ([string]::IsNullOrWhiteSpace($trackedText)) { throw "git ls-files returned no files." }
-    $trackedProgressLines = @($trackedText -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" })
-    $totalFilesExpected = $trackedProgressLines.Count
+    if ($trackedLinesForScope.Count -eq 0) { throw "git ls-files returned no files." }
+    $trackedText = ($trackedLinesForScope -join "`n")
+    if (-not [string]::IsNullOrEmpty($trackedText) -and -not $trackedText.EndsWith("`n")) { $trackedText += "`n" }
+    $totalFilesExpected = $trackedLinesForScope.Count
     $r = Try-CmdStdin "npx.cmd" ($repBase + @("--stdin") + $repArgs.ToArray()) $trackedText -Activity "repomix" -WatchFile $repomixOut -TickMs 1000 -TotalItems $totalFilesExpected -WatchToken $repWatchToken
   } else {
+    if ($StrictTracked) {
+      Write-Step "Strict tracked mode falling back to non-stdin scan"
+    }
+    Write-Step "Collecting tracked and untracked files for scoped pack"
     $combinedPaths = @()
     $trackedForProgressCmd = Try-Cmd "git" @("ls-files")
     if ($trackedForProgressCmd.Code -eq 0 -and -not [string]::IsNullOrWhiteSpace($trackedForProgressCmd.Out)) {
@@ -958,6 +1135,7 @@ try {
       $combinedPaths += @($untrackedForProgressCmd.Out -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne "" })
     }
     $combinedPaths = @($combinedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    if ($combinedPaths.Count -eq 0) { throw "git ls-files returned no files." }
     $totalFilesExpected = $combinedPaths.Count
     $r = Try-CmdStdin "npx.cmd" ($repBase + $repArgs.ToArray()) $null -Activity "repomix" -WatchFile $repomixOut -TickMs 1000 -TotalItems $totalFilesExpected -WatchToken $repWatchToken
   }
@@ -970,7 +1148,7 @@ try {
   if (Test-Path $repomixOut) {
     try {
       $repomixText = Get-Content -Path $repomixOut -Raw -ErrorAction Stop
-      $includedLines = Get-DirectoryStructureLinesFromXml $repomixText
+      $includedLines = Get-IncludedLinesFromRepomixXml $repomixText
     } catch { }
   }
   $includedLines = @($includedLines | Sort-Object -Unique)
@@ -1003,6 +1181,27 @@ try {
 
   $includedCount = $includedLines.Count
   $missingTrackedCount = $missingLines.Count
+  $trackedCount = $trackedLines.Count
+  $includedTrackedCount = $trackedCount - $missingTrackedCount
+  if ($includedTrackedCount -lt 0) { $includedTrackedCount = 0 }
+  $trackedCoveragePct = 100.0
+  if ($trackedCount -gt 0) {
+    $trackedCoveragePct = [Math]::Round(($includedTrackedCount / [double]$trackedCount) * 100.0, 2)
+  }
+  $trackedCoveragePctStr = [string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0:0.00}", $trackedCoveragePct)
+  $coverageGateStatus = "pass"
+  $coverageGateFailed = $false
+  if ($NoCoverageGate) {
+    $coverageGateStatus = "disabled"
+  } elseif ($trackedCoveragePct -lt $MinTrackedCoveragePct) {
+    $coverageGateStatus = "fail"
+    $coverageGateFailed = $true
+    Write-Host ("ERROR: tracked coverage gate failed: " + $trackedCoveragePctStr + "% < " + $MinTrackedCoveragePct + "%")
+    if ($missingLines.Count -gt 0) {
+      Write-Host "missing_tracked_first20:"
+      foreach ($line in ($missingLines | Select-Object -First 20)) { Write-Host ("- " + $line) }
+    }
+  }
   $untrackedCount = $untrackedLines.Count
   $untrackedPackWritten = $false
   $untrackedPackStatus = "untracked_pack: disabled"
@@ -1034,7 +1233,7 @@ try {
       $repArgsUntracked.Add($injectPath) | Out-Null
       $repArgsUntracked.Add("--ignore") | Out-Null
       $repArgsUntracked.Add(($ignore | Select-Object -Unique) -join ",") | Out-Null
-      $rUntracked = Try-CmdStdin "npx.cmd" (@("--yes","repomix@latest","--stdin") + $repArgsUntracked.ToArray()) $stdinText
+      $rUntracked = Try-CmdStdin "npx.cmd" (@("--yes",$RepomixSpec,"--stdin") + $repArgsUntracked.ToArray()) $stdinText
       if ($rUntracked.Code -ne 0) {
         $errLines = @()
         $errLines += "repomix untracked pack failed"
@@ -1111,6 +1310,10 @@ try {
   $navLines += "branch: $branch"
   $navLines += "commit: $sha"
   $navLines += ("dirty: " + ($(if ($dirty) {"yes"} else {"no"})))
+  $navLines += "scope_mode: $scopeMode"
+  $navLines += "strict_mode: $strictModeStatus"
+  $navLines += "tracked_coverage_pct: $trackedCoveragePctStr"
+  $navLines += "coverage_gate: $coverageGateStatus"
   $navLines += "workdir: $workDir"
   $navLines += "outDir: $outDir"
   if ($zipEnabled) {
@@ -1285,7 +1488,17 @@ try {
   $sumBase += "staged_diff_bytes: $stagedBytes"
   $sumBase += "repomix_elapsed: $repomixElapsedStr"
   $sumBase += "included_count: $includedCount"
+  $sumBase += "tracked_count: $trackedCount"
+  $sumBase += "included_tracked_count: $includedTrackedCount"
   $sumBase += "missing_tracked_count: $missingTrackedCount"
+  $sumBase += "tracked_coverage_pct: $trackedCoveragePctStr"
+  $sumBase += "coverage_threshold_pct: $MinTrackedCoveragePct"
+  $sumBase += "coverage_gate: $coverageGateStatus"
+  $sumBase += "scope_mode: $scopeMode"
+  $sumBase += "strict_mode: $strictModeStatus"
+  if (-not [string]::IsNullOrWhiteSpace($strictModeDetail)) {
+    $sumBase += ("strict_mode_detail: " + $strictModeDetail)
+  }
   $sumBase += "untracked_count: $untrackedCount"
   $sumBase += $untrackedPackStatus
   $sumBase += "elapsed_pack: $elapsedPackStr"
@@ -1293,6 +1506,10 @@ try {
   $sumPath = Join-Path $outDir "AIPACK_SUMMARY.txt"
   Write-Step "Writing AIPACK_SUMMARY.txt"
   Write-Utf8NoBom $sumPath ($sum -join "`n")
+
+  if ($coverageGateFailed) {
+    throw ("Tracked coverage gate failed: " + $trackedCoveragePctStr + "% is below " + $MinTrackedCoveragePct + "%. See " + $missingPath)
+  }
 
   $zipOk = $false
   if ($zipEnabled) {
