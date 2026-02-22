@@ -1,43 +1,73 @@
-﻿# aipack
+# aipack
 
-Creates an AI friendly snapshot of the current git repo folder:
-- repomix-output.xml
-- patch.diff (git diff --no-color)
-- REPO_INFO.md and other metadata (depends on script version)
+AIPACK creates an AI-facing repository snapshot where the effective packaging boundary is `repomix-output.xml`.
 
 ## Install
 In PowerShell from this repo folder:
-.\install.ps1
 
-Open a new terminal:
-aipack help
-
-## Progress and timing
-- During repomix, aipack shows a live PowerShell progress indicator with elapsed time and `files: X/Y`.
-- Percent is based on files packed so far vs expected files (tracked + untracked non-ignored).
-- If repomix skips some files (for example binaries), the percent is an estimate, but it should stay close.
-- After repomix completes, aipack prints: `repomix finished in HH:MM:SS`
-- At the end of a successful run, aipack prints: `Finished in HH:MM:SS`
-- `AIPACK_SUMMARY.txt` includes:
-  - `elapsed_pack: HH:MM:SS`
-  - `repomix_elapsed: HH:MM:SS`
-- Running PowerShell with `-Verbose` passes through to repomix as `--verbose`.
-
-### Manual test
-From repo root:
 ```powershell
-.\install.ps1 -Force
-aipack -Verbose
+.\install.ps1
 ```
-Confirm you see the repomix progress indicator and both timing lines:
-- `repomix finished in HH:MM:SS`
-- `Finished in HH:MM:SS`
 
-## Update
-git pull
-.\install.ps1 -Force
+Open a new terminal, then run:
 
-## Uninstall
-.\uninstall.ps1
+```powershell
+aipack help
+```
 
-Installer now ensures git + node are installed (winget preferred, official installers as fallback).
+## Directory semantics
+- Target repo: the git repository you run `aipack` against.
+- Output dir: always inside target repo root (default `_aipack_<repo>_<utc>`).
+- Staging dir: temporary OS temp folder outside the repo, deleted after run.
+- Pack mode never reads/writes from the install directory.
+
+## Modes
+- Default (`aipack`): full snapshot.
+- Full snapshot includes tracked + untracked non-ignored files.
+- `-TrackedOnly`: full snapshot but tracked only.
+- `-LegacyFiltered`: opt-in old filtered behavior.
+- `-AllowMissingTracked`: do not hard-fail when tracked files are missing from `repomix-output.xml`.
+
+Compatibility aliases:
+- `-StrictTracked`: deprecated alias for `-TrackedOnly`.
+- `-PackUntracked`: deprecated compatibility alias (default already includes untracked).
+
+## Missing tracked enforcement
+- Full snapshot mode: missing tracked files are a hard failure by default.
+- Legacy filtered mode: warning by default (non-fatal).
+- Legacy strict opt-in: `-LegacyFiltered -TrackedOnly` enables hard failure.
+- `-AllowMissingTracked` disables hard failure in any mode.
+
+## Full snapshot protections
+Full snapshot mode avoids silent omissions by:
+- building an explicit manifest and staging mirror (no stdin selection),
+- shadowing `.repomixignore` files during staging,
+- disabling repomix default ignore layers for the full run,
+- disabling repomix security filtering for the full run,
+- pinning repomix max file size to `largest_manifest_file + margin`,
+- enabling parsable output for deterministic path rewriting.
+
+Because security filtering is disabled in full snapshot mode, review pack contents before sharing externally.
+
+## Key output artifacts
+- `repomix-output.xml`
+- `patch.diff` (and optional `patch.staged.diff`)
+- `REPO_INFO.md`
+- `AIPACK_NAV.md`
+- `AIPACK_SUMMARY.txt`
+- `aipack_included.txt`
+- `git_tracked.txt`
+- `git_untracked.txt`
+- `aipack_missing_tracked.txt`
+- `aipack_missing_untracked.txt`
+- `aipack_skipped_oversize.txt`
+- `aipack_excluded_security.txt`
+
+## Acceptance harness
+Run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\acceptance_harness.ps1
+```
+
+The harness validates packaging boundary completeness, legacy compatibility, and cwd independence.
